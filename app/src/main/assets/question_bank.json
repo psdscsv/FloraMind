@@ -1,0 +1,33 @@
+[
+  {
+    "id": 1,
+    "type": "DEFINITION",
+    "stem": "光合作用",
+    "correctAnswer": "绿色植物利用光能，将二氧化碳和水转化为有机物并释放氧气的过程。",
+    "keywords": ["光能", "二氧化碳", "水", "有机物", "氧气"]
+  },
+  {
+    "id": 2,
+    "type": "CHOICE",
+    "stem": "植物进行光合作用的主要场所是？",
+    "options": ["线粒体", "叶绿体", "细胞核", "液泡"],
+    "correctAnswer": "叶绿体"
+  },
+  {
+    "id": 3,
+    "type": "DIAGRAM",
+    "stem": "请根据下方叶片结构示意图，填写①②③对应的结构名称",
+    "imageName": "leaf.png",
+    "labels": [
+      { "x": 0.2, "y": 0.3, "correctAnswer": "上表皮" },
+      { "x": 0.5, "y": 0.6, "correctAnswer": "栅栏组织" },
+      { "x": 0.8, "y": 0.9, "correctAnswer": "气孔" }
+    ]
+  },
+  {
+    "id": 4,
+    "type": "ESSAY",
+    "stem": "简述植物蒸腾作用对植物自身和环境的意义。",
+    "keywords": ["水分运输", "降温", "大气湿度", "循环"]
+  }
+]
