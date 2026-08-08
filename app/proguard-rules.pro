@@ -19,3 +19,8 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Gson
+-keep class com.psd.floramind.model.** { *; }
+-keep class com.psd.floramind.model.network.** { *; }
+-keepattributes Signature, *Annotation*

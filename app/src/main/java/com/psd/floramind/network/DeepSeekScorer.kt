@@ -54,7 +54,7 @@ class DeepSeekScorer(private val apiKey: String) {
             )
         )
         val response = api.chatCompletion("Bearer $apiKey", request)
-        val content = response.choices.firstOrNull()?.message?.content ?: "{}"
+        val content = response.choices?.firstOrNull()?.message?.content ?: "{}"
         return try {
             Gson().fromJson(content, GradingResult::class.java)
         } catch (e: Exception) {

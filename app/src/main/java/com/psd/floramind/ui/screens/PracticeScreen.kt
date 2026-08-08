@@ -401,10 +401,10 @@ fun ResultCard(result: GradingResult) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(text = "得分: ${result.score}", style = MaterialTheme.typography.titleMedium)
             Text(text = "反馈: ${result.feedback}")
-            if (result.matchedPoints.isNotEmpty()) {
+            if (result.matchedPoints!!.isNotEmpty()) {
                 Text(text = "✅ 匹配要点: ${result.matchedPoints.joinToString()}")
             }
-            if (result.missingPoints.isNotEmpty()) {
+            if (result.missingPoints!!.isNotEmpty()) {
                 Text(text = "❌ 缺失要点: ${result.missingPoints.joinToString()}")
             }
             if (result.suggestions.isNotEmpty()) {

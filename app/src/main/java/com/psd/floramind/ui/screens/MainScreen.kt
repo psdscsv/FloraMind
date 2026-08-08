@@ -80,7 +80,7 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("植物智记 - 练习", style = MaterialTheme.typography.headlineSmall)
+        Text("动植智记（第二代测试版）", style = MaterialTheme.typography.headlineSmall)
         Spacer(modifier = Modifier.height(16.dp))
 
         when {
