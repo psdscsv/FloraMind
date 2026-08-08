@@ -6,6 +6,7 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "study_records")
 data class StudyRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val packageName: String = "内置题库",
     val questionId: Int,
     val userAnswer: String,
     val score: Int,

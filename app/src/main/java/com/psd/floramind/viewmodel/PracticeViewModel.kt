@@ -1,5 +1,6 @@
 package com.psd.floramind.viewmodel
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.psd.floramind.model.*
@@ -26,20 +27,34 @@ class PracticeViewModel(
     private val _gradingResult = MutableStateFlow<GradingResult?>(null)
     val gradingResult: StateFlow<GradingResult?> = _gradingResult.asStateFlow()
 
-    private var scorer: DeepSeekScorer? = if (apiKey.isNotEmpty()) DeepSeekScorer(apiKey) else null
+    // 新增加载状态
+    private val _isLoading = MutableStateFlow(true)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    init {
-        loadQuestions()
-    }
+    private var scorer: DeepSeekScorer? = if (apiKey.isNotEmpty()) DeepSeekScorer(apiKey) else null
+    private var currentPackageName = ""
 
     fun setApiKey(key: String) {
         apiKey = key
         scorer = if (key.isNotEmpty()) DeepSeekScorer(key) else null
     }
 
-    fun loadQuestions() {
-        viewModelScope.launch {
-            _questions.value = repository.getAllQuestions()
+    // 关键：必须为 suspend 函数
+    suspend fun loadQuestionsForPackage(packageName: String) {
+        currentPackageName = packageName
+        _isLoading.value = true
+        try {
+            val list = repository.getQuestionsByPackage(packageName)
+            _questions.value = list
+            Log.d("PracticeVM", "Loaded ${list.size} questions for package '$packageName'")
+            if (list.isEmpty()) {
+                Log.w("PracticeVM", "No questions found for package '$packageName'")
+            }
+        } catch (e: Exception) {
+            Log.e("PracticeVM", "Failed to load questions", e)
+            _questions.value = emptyList()
+        } finally {
+            _isLoading.value = false
         }
     }
 
@@ -47,6 +62,8 @@ class PracticeViewModel(
         if (index in 0 until _questions.value.size) {
             _currentIndex.value = index
             _gradingResult.value = null
+        } else {
+            Log.w("PracticeVM", "Invalid index $index, size=${_questions.value.size}")
         }
     }
 
@@ -95,6 +112,7 @@ class PracticeViewModel(
             }
             _gradingResult.value = result
             val record = StudyRecord(
+                packageName = question.packageName,
                 questionId = question.id,
                 userAnswer = userAnswer,
                 score = result.score,
@@ -127,6 +145,7 @@ class PracticeViewModel(
         )
         _gradingResult.value = result
         val record = StudyRecord(
+            packageName = question.packageName,
             questionId = question.id,
             userAnswer = labelAnswers.values.joinToString("; "),
             score = score,

@@ -29,7 +29,7 @@ fun MistakeScreen(repository: QuestionRepository, navController: NavController) 
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),
                     onClick = {
-                        navController.navigate("practice/${record.questionId}")
+                        navController.navigate("practice/${record.packageName}/${record.questionId}")
                     }
                 ) {
                     Column(modifier = Modifier.padding(8.dp)) {
@@ -37,7 +37,7 @@ fun MistakeScreen(repository: QuestionRepository, navController: NavController) 
                         Text("你的答案: ${record.userAnswer}")
                         Text("得分: ${record.score}")
                         Button(onClick = {
-                            navController.navigate("practice/${record.questionId}")
+                            navController.navigate("practice/${record.packageName}/${record.questionId}")
                         }) {
                             Text("重新练习")
                         }

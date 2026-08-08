@@ -15,7 +15,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import coil.compose.rememberAsyncImagePainter
@@ -27,10 +26,12 @@ import com.psd.floramind.model.network.GradingResult
 import com.psd.floramind.repository.QuestionRepository
 import com.psd.floramind.viewmodel.PracticeViewModel
 import kotlinx.coroutines.launch
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PracticeScreen(
+    packageName: String,
     questionId: Int,
     repository: QuestionRepository,
     navController: NavController
@@ -47,23 +48,30 @@ fun PracticeScreen(
         viewModel.setApiKey(apiKey)
     }
 
-    LaunchedEffect(questionId) {
-        viewModel.loadQuestions()
+    // 加载数据并设置索引（挂起函数，可等待）
+    LaunchedEffect(packageName, questionId) {
+        viewModel.loadQuestionsForPackage(packageName)
         val qs = viewModel.questions.value
         val index = qs.indexOfFirst { it.id == questionId }
-        if (index >= 0) viewModel.setCurrentIndex(index)
+        if (index >= 0) {
+            viewModel.setCurrentIndex(index)
+        } else if (qs.isNotEmpty()) {
+            viewModel.setCurrentIndex(0) // 若指定ID不存在，默认第一题
+        }
+        // 若qs为空，则不设置索引，UI显示“暂无题目”
     }
 
-    val question by remember { derivedStateOf { viewModel.questions.value.getOrNull(viewModel.currentIndex.value) } }
-    val userAnswers by viewModel.userAnswers.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val questions by viewModel.questions.collectAsState()
+    val currentIndex by viewModel.currentIndex.collectAsState()
     val gradingResult by viewModel.gradingResult.collectAsState()
+    val userAnswers by viewModel.userAnswers.collectAsState()
     val scope = rememberCoroutineScope()
 
+    // 填图题专用状态
     var diagramAnswers by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-
     var showCoordinateDialog by remember { mutableStateOf(false) }
     var clickedPoint by remember { mutableStateOf<Offset?>(null) }
-    var imageSize by remember { mutableStateOf(IntSize.Zero) }
 
     Scaffold(
         topBar = {
@@ -77,111 +85,146 @@ fun PracticeScreen(
             )
         }
     ) { padding ->
-        if (question == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-            return@Scaffold
-        }
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            when {
+                isLoading -> {
+                    // 加载中
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("加载题目中...")
+                    }
+                }
+                questions.isEmpty() -> {
+                    // 无数据
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("该题库包暂无题目")
+                    }
+                }
+                else -> {
+                    // 有数据，获取当前题目
+                    val question = questions.getOrNull(currentIndex)
+                    if (question == null) {
+                        // 索引无效（理论上不会发生）
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("当前题目不存在")
+                        }
+                    } else {
+                        val q = question
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // 题干
+                            item {
+                                Text(
+                                    text = q.stem,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
 
-        val q = question!!
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // 题干
-            item {
-                Text(
-                    text = q.stem,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface
+                            // 题型输入
+                            item {
+                                when (q.type) {
+                                    QuestionType.CHOICE -> ChoiceInput(q, viewModel)
+                                    QuestionType.FILL_BLANK -> FillBlankInput(q, viewModel, userAnswers)
+                                    QuestionType.DEFINITION, QuestionType.SHORT_ANSWER, QuestionType.ESSAY ->
+                                        EssayInput(q, viewModel, userAnswers)
+                                    QuestionType.DIAGRAM -> DiagramInput(
+                                        q = q,
+                                        packageName = packageName,
+                                        repository = repository,
+                                        diagramAnswers = diagramAnswers,
+                                        onDiagramAnswerChange = { newMap -> diagramAnswers = newMap },
+                                        onShowDialog = { point ->
+                                            clickedPoint = point
+                                            showCoordinateDialog = true
+                                        },
+                                        viewModel = viewModel
+                                    )
+                                }
+                            }
+
+                            // 提交按钮
+                            item {
+                                Button(
+                                    onClick = {
+                                        if (q.type == QuestionType.DIAGRAM) {
+                                            viewModel.submitDiagramAnswers(diagramAnswers)
+                                        } else {
+                                            viewModel.submitCurrentAnswer()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("提交答案")
+                                }
+                            }
+
+                            // 评分结果
+                            if (gradingResult != null) {
+                                item {
+                                    ResultCard(gradingResult!!)
+                                }
+                            }
+
+                            // 导航按钮
+                            item {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            val prev = currentIndex - 1
+                                            if (prev >= 0) viewModel.setCurrentIndex(prev)
+                                        },
+                                        enabled = currentIndex > 0
+                                    ) {
+                                        Text("上一题")
+                                    }
+                                    Button(
+                                        onClick = {
+                                            val next = currentIndex + 1
+                                            if (next < questions.size) viewModel.setCurrentIndex(next)
+                                        },
+                                        enabled = currentIndex < questions.size - 1
+                                    ) {
+                                        Text("下一题")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 坐标输入对话框（仅填图题）
+            if (showCoordinateDialog && clickedPoint != null) {
+                val labels = questions.getOrNull(currentIndex)?.labels ?: emptyList()
+                DiagramLabelDialog(
+                    clickedPoint = clickedPoint!!,
+                    labels = labels,
+                    onDismiss = { showCoordinateDialog = false },
+                    onSave = { index, text ->
+                        diagramAnswers = diagramAnswers + (index.toString() to text)
+                        showCoordinateDialog = false
+                    }
                 )
             }
-
-            // 根据题型渲染不同的输入区域
-            item {
-                when (q.type) {
-                    QuestionType.CHOICE -> ChoiceInput(q, viewModel)
-                    QuestionType.FILL_BLANK -> FillBlankInput(q, viewModel, userAnswers)
-                    QuestionType.DEFINITION, QuestionType.SHORT_ANSWER, QuestionType.ESSAY ->
-                        EssayInput(q, viewModel, userAnswers)
-                    QuestionType.DIAGRAM -> DiagramInput(
-                        q = q,
-                        diagramAnswers = diagramAnswers,
-                        onDiagramAnswerChange = { newMap -> diagramAnswers = newMap },
-                        onShowDialog = { point ->
-                            clickedPoint = point
-                            showCoordinateDialog = true
-                        },
-                        viewModel = viewModel
-                    )
-                }
-            }
-
-            // 提交按钮
-            item {
-                Button(
-                    onClick = {
-                        if (q.type == QuestionType.DIAGRAM) {
-                            viewModel.submitDiagramAnswers(diagramAnswers)
-                        } else {
-                            viewModel.submitCurrentAnswer()
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("提交答案")
-                }
-            }
-
-            // 评分结果
-            if (gradingResult != null) {
-                item {
-                    ResultCard(gradingResult!!)
-                }
-            }
-
-            // 导航按钮
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    Button(onClick = {
-                        val prev = viewModel.currentIndex.value - 1
-                        if (prev >= 0) viewModel.setCurrentIndex(prev)
-                    }) {
-                        Text("上一题")
-                    }
-                    Button(onClick = {
-                        val next = viewModel.currentIndex.value + 1
-                        if (next < viewModel.questions.value.size) viewModel.setCurrentIndex(next)
-                    }) {
-                        Text("下一题")
-                    }
-                }
-            }
-        }
-
-        // 坐标输入对话框（仅填图题）
-        if (showCoordinateDialog && clickedPoint != null && q.type == QuestionType.DIAGRAM) {
-            DiagramLabelDialog(
-                clickedPoint = clickedPoint!!,
-                labels = q.labels ?: emptyList(),
-                onDismiss = { showCoordinateDialog = false },
-                onSave = { index, text ->
-                    diagramAnswers = diagramAnswers + (index.toString() to text)
-                    showCoordinateDialog = false
-                }
-            )
         }
     }
 }
 
-// ----- 各题型输入组件 -----
+// ===== 各题型输入组件 =====
+
 @Composable
 private fun ChoiceInput(q: Question, viewModel: PracticeViewModel) {
     val options = q.options ?: emptyList()
@@ -235,6 +278,8 @@ private fun EssayInput(q: Question, viewModel: PracticeViewModel, userAnswers: M
 @Composable
 private fun DiagramInput(
     q: Question,
+    packageName: String,
+    repository: QuestionRepository,
     diagramAnswers: Map<String, String>,
     onDiagramAnswerChange: (Map<String, String>) -> Unit,
     onShowDialog: (Offset) -> Unit,
@@ -243,6 +288,13 @@ private fun DiagramInput(
     val context = LocalContext.current
     Column {
         if (q.imageName != null) {
+            // 优先从内部存储加载，若不存在则从 assets 加载
+            val imageFile = repository.getImageFile(packageName, q.imageName)
+            val imageUri = if (imageFile != null && imageFile.exists()) {
+                imageFile
+            } else {
+                "file:///android_asset/${q.imageName}"
+            }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -264,7 +316,7 @@ private fun DiagramInput(
                 Image(
                     painter = rememberAsyncImagePainter(
                         ImageRequest.Builder(context)
-                            .data("file:///android_asset/${q.imageName}")
+                            .data(imageUri)
                             .build()
                     ),
                     contentDescription = null,
@@ -274,7 +326,7 @@ private fun DiagramInput(
             }
         }
 
-        // 显示已输入的标签
+        // 显示标签输入框
         val labels = q.labels ?: emptyList()
         labels.forEachIndexed { index, label ->
             Row(verticalAlignment = Alignment.CenterVertically) {

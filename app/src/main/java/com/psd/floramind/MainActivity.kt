@@ -18,9 +18,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val repository = QuestionRepository(this)
-        // 在后台加载题库（首次启动时）
         CoroutineScope(Dispatchers.IO).launch {
-            repository.loadQuestionsFromAssets(this@MainActivity)
+            repository.loadBuiltInQuestionsIfEmpty()
         }
 
         setContent {
