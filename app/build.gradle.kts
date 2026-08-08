@@ -1,3 +1,5 @@
+import java.io.FileInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -18,11 +20,29 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        val localProperties = org.jetbrains.kotlin.konan.properties.Properties()
+        val localFile = rootProject.file("local.properties")
+        if (localFile.exists()) {
+            FileInputStream(localFile).use { localProperties.load(it) }
+        }
+        val apiKey = localProperties.getProperty("api_key", "")
+        buildConfigField("String", "API_KEY", "\"$apiKey\"")
+    }
+    // 签名配置
+    signingConfigs {
+        create("release") {
+            storeFile = file("C:\\Users\\tanru\\projects\\android\\mykey\\test3")   // 例如: "D:/keys/my-release-key.jks"
+            storePassword = "123456"
+            keyAlias = "key0"
+            keyPassword = "123456"
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -34,6 +54,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 }
