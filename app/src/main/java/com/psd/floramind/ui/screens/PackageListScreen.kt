@@ -1,6 +1,7 @@
 package com.psd.floramind.ui.screens
 
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -8,7 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,6 +20,7 @@ import androidx.navigation.NavController
 import com.psd.floramind.repository.QuestionRepository
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PackageListScreen(repository: QuestionRepository, navController: NavController) {
     val context = LocalContext.current
@@ -29,35 +31,81 @@ fun PackageListScreen(repository: QuestionRepository, navController: NavControll
     var importPackageName by remember { mutableStateOf("") }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
-        isLoading = true
-        packages = repository.getAllPackages()
-        isLoading = false
-    }
+    // 刷新触发器：改变时强制刷新题目数量
+    var refreshTrigger by remember { mutableStateOf(0) }
 
+    // 删除模式状态
+    var isDeleteMode by remember { mutableStateOf(false) }
+    var selectedPackages by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    // 文件选择器
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
             scope.launch {
                 try {
-                    val count = repository.importPackageFromZip(it, importPackageName.ifBlank { "未命名题库" })
-                    snackbarMessage = "成功导入 $count 道题目"
+                    val packageName = importPackageName.ifBlank { "未命名题库" }
+                    Log.d("PackageList", "Importing package: $packageName from $uri")
+                    val count = repository.importPackageFromZip(it, packageName)
+                    snackbarMessage = if (count > 0) "成功导入 $count 道题目" else "导入失败，请检查压缩包格式"
+                    // 刷新列表和数量
                     packages = repository.getAllPackages()
+                    refreshTrigger++
                 } catch (e: Exception) {
+                    Log.e("PackageList", "Import failed", e)
                     snackbarMessage = "导入失败: ${e.message}"
                 }
                 showImportDialog = false
+                importPackageName = ""
             }
         }
     }
 
+    // 加载包列表
+    LaunchedEffect(Unit) {
+        isLoading = true
+        packages = repository.getAllPackages()
+        isLoading = false
+    }
+
+    // 执行删除
+    fun performDelete() {
+        scope.launch {
+            val toDelete = selectedPackages.toList() // 复制一份，避免并发修改
+            toDelete.forEach { pkg ->
+                repository.deletePackage(pkg)
+            }
+            selectedPackages = emptySet()
+            isDeleteMode = false
+            packages = repository.getAllPackages()
+            refreshTrigger++
+            snackbarMessage = "已删除 ${toDelete.size} 个题库包"
+        }
+    }
+
     Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("题库包") },
+                actions = {
+                    IconButton(onClick = { isDeleteMode = !isDeleteMode }) {
+                        Icon(
+                            if (isDeleteMode) Icons.Default.Close else Icons.Default.Delete,
+                            contentDescription = if (isDeleteMode) "退出删除模式" else "删除题库"
+                        )
+                    }
+                }
+            )
+        },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showImportDialog = true }) {
-                Icon(Icons.Default.Add, contentDescription = "导入题库")
+            if (!isDeleteMode) {
+                FloatingActionButton(onClick = { showImportDialog = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "导入题库")
+                }
             }
         }
+        // 注意：移除了 snackbarHost 参数
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when {
@@ -65,47 +113,97 @@ fun PackageListScreen(repository: QuestionRepository, navController: NavControll
                 packages.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     Text("暂无题库包，点击右下角 + 导入")
                 }
-                else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(packages) { pkg ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { navController.navigate("package_questions/$pkg") },
-                            elevation = CardDefaults.cardElevation(2.dp)
-                        ) {
-                            Row(
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(packages, key = { it }) { pkg ->
+                            val isSelected = selectedPackages.contains(pkg)
+                            val count by produceState(initialValue = 0, key1 = pkg, key2 = refreshTrigger) {
+                                value = repository.getQuestionCount(pkg)
+                            }
+
+                            Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                    .clickable(enabled = !isDeleteMode) {
+                                        navController.navigate("package_questions/$pkg")
+                                    },
+                                elevation = CardDefaults.cardElevation(2.dp)
                             ) {
-                                Text(text = pkg, style = MaterialTheme.typography.titleMedium)
-                                val count by produceState(0) {
-                                    value = repository.getQuestionCount(pkg)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isDeleteMode) {
+                                        Checkbox(
+                                            checked = isSelected,
+                                            onCheckedChange = {
+                                                selectedPackages = if (it) {
+                                                    selectedPackages + pkg
+                                                } else {
+                                                    selectedPackages - pkg
+                                                }
+                                            }
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(text = pkg, style = MaterialTheme.typography.titleMedium)
+                                        Text(text = "$count 题", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    if (!isDeleteMode) {
+                                        Icon(
+                                            Icons.Default.ArrowForward,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
-                                Text(text = "$count 题", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+
+                    // 删除模式底部按钮
+                    if (isDeleteMode && selectedPackages.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            Button(
+                                onClick = { performDelete() },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Text("删除选中的 ${selectedPackages.size} 个题库包")
                             }
                         }
                     }
                 }
             }
 
-            snackbarMessage?.let {
+            // Snackbar 覆盖层（始终显示）
+            snackbarMessage?.let { msg ->
                 Snackbar(
                     modifier = Modifier.align(Alignment.BottomCenter),
                     action = {
-                        TextButton(onClick = { snackbarMessage = null }) { Text("关闭") }
+                        TextButton(onClick = { snackbarMessage = null }) {
+                            Text("关闭")
+                        }
                     }
                 ) {
-                    Text(it)
+                    Text(msg)
                 }
             }
         }
     }
 
+    // 导入对话框
     if (showImportDialog) {
         AlertDialog(
             onDismissRequest = { showImportDialog = false },
@@ -118,24 +216,26 @@ fun PackageListScreen(repository: QuestionRepository, navController: NavControll
                         value = importPackageName,
                         onValueChange = { importPackageName = it },
                         label = { Text("题库包名称（可选）") },
-                        placeholder = { Text("留空则使用文件名") },
+                        placeholder = { Text("留空则使用默认名") },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (importPackageName.isBlank()) {
-                        snackbarMessage = "请输入题库名称"
-                        return@TextButton
-                    }
+                    Log.d("PackageList", "Confirm button clicked, launching file picker")
                     importLauncher.launch(arrayOf("application/zip"))
                 }) {
                     Text("选择文件")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showImportDialog = false }) { Text("取消") }
+                TextButton(onClick = {
+                    showImportDialog = false
+                    importPackageName = ""
+                }) {
+                    Text("取消")
+                }
             }
         )
     }

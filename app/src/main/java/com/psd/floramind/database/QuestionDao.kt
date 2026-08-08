@@ -25,4 +25,7 @@ interface QuestionDao {
 
     @Query("SELECT COUNT(*) FROM questions WHERE packageName = :packageName")
     suspend fun getQuestionCountByPackage(packageName: String): Int
+
+    @Query("DELETE FROM questions WHERE packageName = :packageName")
+    suspend fun deleteByPackage(packageName: String)
 }

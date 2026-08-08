@@ -25,7 +25,11 @@ class QuestionRepository(private val context: Context) {
 
     // 私有存储根目录
     private val packagesRootDir by lazy { File(context.filesDir, "packages") }
-
+    suspend fun deletePackage(packageName: String) {
+        questionDao.deleteByPackage(packageName)
+        val dir = File(packagesRootDir, packageName)
+        if (dir.exists()) dir.deleteRecursively()
+    }
     // ----- 初始化：加载内置题库（若数据库为空） -----
     suspend fun loadBuiltInQuestionsIfEmpty() {
         val count = questionDao.getAll().size
@@ -53,6 +57,7 @@ class QuestionRepository(private val context: Context) {
             if (targetDir.exists()) targetDir.deleteRecursively()
             targetDir.mkdirs()
 
+            // 1. 解压 ZIP
             context.contentResolver.openInputStream(uri)?.use { inputStream ->
                 ZipInputStream(inputStream).use { zipStream ->
                     var entry = zipStream.nextEntry
@@ -72,16 +77,56 @@ class QuestionRepository(private val context: Context) {
                 }
             } ?: return@withContext 0
 
-            // 解析 questions.json
-            val jsonFile = File(targetDir, "questions.json")
-            if (!jsonFile.exists()) return@withContext 0
-            val jsonString = jsonFile.readText()
-            val questions = parseQuestionsFromJson(jsonString)
+            // 2. 查找 questions.json（允许在子目录中）
+            var jsonFile: File? = null
+            var baseDir: File? = null
+            targetDir.walkTopDown().forEach { file ->
+                if (file.isFile && file.name.equals("questions.json", ignoreCase = true)) {
+                    jsonFile = file
+                    baseDir = file.parentFile
+                    return@forEach
+                }
+            }
+
+            if (jsonFile == null || !jsonFile!!.exists()) {
+                Log.e("QuestionRepo", "questions.json not found in ${targetDir.absolutePath}")
+                return@withContext 0
+            }
+
+            // 3. 如果 questions.json 不在根目录，则将其所在目录内容移到根目录
+            if (baseDir != null && baseDir != targetDir) {
+                Log.d("QuestionRepo", "Moving contents from ${baseDir.absolutePath} to ${targetDir.absolutePath}")
+                baseDir?.listFiles()?.forEach { child ->
+                    val dest = File(targetDir, child.name)
+                    // 若目标已存在，先删除（避免冲突）
+                    if (dest.exists()) dest.deleteRecursively()
+                    child.renameTo(dest)
+                }
+                // 删除空的基础目录
+                baseDir?.delete()
+                // 更新 jsonFile 引用
+                jsonFile = File(targetDir, "questions.json")
+            }
+
+            // 4. 读取并解析 JSON
+            val jsonString = jsonFile!!.readText()
+            val type = object : TypeToken<List<Question>>() {}.type
+            val questions: List<Question> = try {
+                Gson().fromJson(jsonString, type)
+            } catch (e: Exception) {
+                Log.e("QuestionRepo", "JSON parse error", e)
+                return@withContext 0
+            }
+
+            Log.d("QuestionRepo", "Parsed ${questions.size} questions")
+
+            // 5. 插入数据库（强制使用当前包名）
             val processed = questions.map { it.copy(packageName = packageName) }
             questionDao.insertAll(processed)
             processed.size
         }
     }
+
 
     // ----- 导出：将指定包打包为 ZIP -----
     suspend fun exportPackageToZip(packageName: String): File? {
