@@ -27,8 +27,16 @@ fun NavGraph(repository: QuestionRepository) {
             val questionId = backStackEntry.arguments?.getInt("questionId") ?: 0
             PracticeScreen(packageName, questionId, repository, navController)
         }
-        composable("mistakes") {
-            MistakeScreen(repository, navController)
+        composable(
+            "mistakes_detail/{packageName}",
+            arguments = listOf(navArgument("packageName") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val packageName = backStackEntry.arguments?.getString("packageName") ?: ""
+            MistakeDetailScreen(
+                packageName = java.net.URLDecoder.decode(packageName, "UTF-8"),
+                repository = repository,
+                navController = navController
+            )
         }
         composable("settings") {
             SettingsScreen(repository)

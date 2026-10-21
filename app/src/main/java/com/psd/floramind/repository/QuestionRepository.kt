@@ -27,6 +27,8 @@ class QuestionRepository(private val context: Context) {
     private val packagesRootDir by lazy { File(context.filesDir, "packages") }
     suspend fun deletePackage(packageName: String) {
         questionDao.deleteByPackage(packageName)
+        // ★ 同步删除该题库下的所有学习记录（包括错题），避免出现"孤儿错题"
+        recordDao.deleteByPackage(packageName)
         val dir = File(packagesRootDir, packageName)
         if (dir.exists()) dir.deleteRecursively()
     }
@@ -41,7 +43,19 @@ class QuestionRepository(private val context: Context) {
             Log.d("Repo", "After loading: $newCount questions")
         }
     }
+    suspend fun getMistakePackages(): List<String> {
+        // 过滤掉题库已被删除但仍残留的历史错题记录
+        val validPackages = questionDao.getAllPackageNames().toSet()
+        return recordDao.getDistinctMistakePackages().filter { it in validPackages }
+    }
 
+    suspend fun getMistakesByPackage(packageName: String): List<StudyRecord> =
+        recordDao.getMistakesByPackage(packageName)
+
+    suspend fun getMistakeCount(packageName: String): Int =
+        recordDao.getMistakeCountByPackage(packageName)
+
+    suspend fun deleteMistake(recordId: Long) = recordDao.deleteById(recordId)
     // 从 assets 加载指定包名（内置）
     suspend fun loadQuestionsFromAssets(packageName: String = "内置题库") {
         val inputStream = context.assets.open("question_bank.json")
