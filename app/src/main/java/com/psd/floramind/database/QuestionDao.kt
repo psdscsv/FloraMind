@@ -20,6 +20,10 @@ interface QuestionDao {
     @Query("SELECT DISTINCT packageName FROM questions")
     suspend fun getAllPackageNames(): List<String>
 
+    /** LIKE :pattern ESCAPE '\\' 中 pattern 需由调用方转义 % _ \\ */
+    @Query("SELECT DISTINCT packageName FROM questions WHERE packageName LIKE :pattern ESCAPE '\\'")
+    suspend fun getPackageNamesStartingWith(pattern: String): List<String>
+
     @Query("SELECT * FROM questions WHERE packageName = :packageName")
     suspend fun getQuestionsByPackage(packageName: String): List<Question>
 
@@ -28,4 +32,7 @@ interface QuestionDao {
 
     @Query("DELETE FROM questions WHERE packageName = :packageName")
     suspend fun deleteByPackage(packageName: String)
+
+    @Query("UPDATE questions SET packageName = :newPath WHERE packageName = :oldPath")
+    suspend fun renameExactPackage(oldPath: String, newPath: String)
 }

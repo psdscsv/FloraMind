@@ -1,5 +1,6 @@
 package com.psd.floramind.ui.screens
 
+import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -80,7 +81,7 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("可以在题库界面点右下的“+”加入新题库。论述或简答题，提交后会调用ai给反馈。做错的题目会在错题本里记录，如果同一个题目多次做错也会记录下来。", style = MaterialTheme.typography.headlineSmall)
+        Text("启动后如果没有内置题库，可以在设置里恢复。\n因为没有放图片，所以识图题是空白的。另外由于部分填空题的答案是“略”，题库录入时并没有对此处理，所以看到超多空的填空题可以不管。", style = MaterialTheme.typography.headlineSmall)
         Spacer(modifier = Modifier.height(16.dp))
 
         when {
@@ -98,7 +99,7 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
                     onClick = {
                         if (list.isNotEmpty()) {
                             val random = list.random()
-                            navController.navigate("practice/${random.packageName}/${random.id}")
+                            navController.navigate("practice/${Uri.encode(random.packageName)}/${random.id}")
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
@@ -110,7 +111,7 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
                     onClick = {
                         if (list.isNotEmpty()) {
                             val first = list.first()
-                            navController.navigate("practice/${first.packageName}/${first.id}")
+                            navController.navigate("practice/${Uri.encode(first.packageName)}/${first.id}")
                         }
                     },
                     modifier = Modifier.fillMaxWidth()

@@ -9,7 +9,9 @@ import androidx.compose.ui.unit.dp
 import com.psd.floramind.data.DataStoreManager
 import com.psd.floramind.repository.QuestionRepository
 import com.psd.floramind.viewmodel.SettingsViewModel
+import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(repository: QuestionRepository) {
     val context = LocalContext.current
@@ -20,45 +22,67 @@ fun SettingsScreen(repository: QuestionRepository) {
     var newName by remember { mutableStateOf("") }
     var newKey by remember { mutableStateOf("") }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("设置", style = MaterialTheme.typography.headlineSmall)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("当前用户名: $userName")
-        OutlinedTextField(
-            value = newName,
-            onValueChange = { newName = it },
-            label = { Text("新用户名") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Button(onClick = {
-            if (newName.isNotBlank()) {
-                viewModel.updateUserName(newName)
-                newName = ""
+    // ★ 新增：协程作用域 & Snackbar
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
+        ) {
+            Text("设置", style = MaterialTheme.typography.headlineSmall)
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text("当前用户名: $userName")
+            OutlinedTextField(
+                value = newName,
+                onValueChange = { newName = it },
+                label = { Text("新用户名") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(onClick = {
+                if (newName.isNotBlank()) {
+                    viewModel.updateUserName(newName)
+                    newName = ""
+                }
+            }) {
+                Text("更新用户名")
             }
-        }) {
-            Text("更新用户名")
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("API Key: ${if (apiKey.isNotEmpty()) apiKey.take(4) + "..." else "未设置"}")
-        OutlinedTextField(
-            value = newKey,
-            onValueChange = { newKey = it },
-            label = { Text("新 API Key") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Button(onClick = {
-            if (newKey.isNotBlank()) {
-                viewModel.updateApiKey(newKey)
-                newKey = ""
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text("API Key: ${if (apiKey.isNotEmpty()) apiKey.take(4) + "..." else "未设置"}")
+            OutlinedTextField(
+                value = newKey,
+                onValueChange = { newKey = it },
+                label = { Text("新 API Key") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(onClick = {
+                if (newKey.isNotBlank()) {
+                    viewModel.updateApiKey(newKey)
+                    newKey = ""
+                }
+            }) {
+                Text("更新 API Key")
             }
-        }) {
-            Text("更新 API Key")
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = {
-            // 手动重新加载题库（可选）
-        }) {
-            Text("重新加载题库")
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ★ 恢复内置题库按钮
+            Button(onClick = {
+                scope.launch {
+                    repository.reloadBuiltInPackages()
+                    snackbarHostState.showSnackbar("内置题库已恢复")
+                }
+            }) {
+                Text("恢复内置题库")
+            }
         }
     }
 }

@@ -37,7 +37,7 @@ fun MistakeDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(packageName) },
+                title = { Text(packageName.substringAfterLast('/')) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
