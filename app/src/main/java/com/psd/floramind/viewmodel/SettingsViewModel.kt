@@ -17,6 +17,8 @@ class SettingsViewModel(private val dataStore: DataStoreManager) : ViewModel() {
     init {
         viewModelScope.launch {
             dataStore.userNameFlow.collect { _userName.value = it }
+        }
+        viewModelScope.launch {
             dataStore.apiKeyFlow.collect { _apiKey.value = it }
         }
     }

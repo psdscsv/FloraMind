@@ -80,7 +80,7 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("动植智记（第二代测试版）", style = MaterialTheme.typography.headlineSmall)
+        Text("可以在题库界面点右下的“+”加入新题库。论述或简答题，提交后会调用ai给反馈。做错的题目会在错题本里记录，如果同一个题目多次做错也会记录下来。", style = MaterialTheme.typography.headlineSmall)
         Spacer(modifier = Modifier.height(16.dp))
 
         when {

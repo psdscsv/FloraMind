@@ -24,10 +24,13 @@ class PracticeViewModel(
     private val _userAnswers = MutableStateFlow<MutableMap<Int, String>>(mutableMapOf())
     val userAnswers: StateFlow<Map<Int, String>> = _userAnswers.asStateFlow()
 
+    // 填空题多空答案：questionId -> 每一空的答案列表
+    private val _fillBlankAnswers = MutableStateFlow<Map<Int, List<String>>>(emptyMap())
+    val fillBlankAnswers: StateFlow<Map<Int, List<String>>> = _fillBlankAnswers.asStateFlow()
+
     private val _gradingResult = MutableStateFlow<GradingResult?>(null)
     val gradingResult: StateFlow<GradingResult?> = _gradingResult.asStateFlow()
 
-    // 新增加载状态
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
@@ -39,7 +42,6 @@ class PracticeViewModel(
         scorer = if (key.isNotEmpty()) DeepSeekScorer(key) else null
     }
 
-    // 关键：必须为 suspend 函数
     suspend fun loadQuestionsForPackage(packageName: String) {
         currentPackageName = packageName
         _isLoading.value = true
@@ -77,15 +79,35 @@ class PracticeViewModel(
         return _userAnswers.value[id] ?: ""
     }
 
+    // ---------- 填空题多空答案 ----------
+    fun updateFillBlankAnswer(questionId: Int, blankIndex: Int, text: String) {
+        val current = _fillBlankAnswers.value[questionId]?.toMutableList() ?: mutableListOf()
+        while (current.size <= blankIndex) current.add("")
+        current[blankIndex] = text
+        _fillBlankAnswers.value = _fillBlankAnswers.value + (questionId to current)
+    }
+
+    fun getFillBlankAnswers(questionId: Int): List<String> =
+        _fillBlankAnswers.value[questionId] ?: emptyList()
+
+    // ---------- 提交 ----------
     fun submitCurrentAnswer() {
         val question = _questions.value.getOrNull(_currentIndex.value) ?: return
+
+        // 填空题单独分流
+        if (question.type == QuestionType.FILL_BLANK) {
+            submitFillBlank(question)
+            return
+        }
+
         val userAnswer = getUserAnswerForCurrent()
         if (userAnswer.isBlank()) return
 
         viewModelScope.launch {
             val result = when (question.type) {
-                QuestionType.CHOICE, QuestionType.FILL_BLANK -> {
-                    val correct = question.correctAnswer?.equals(userAnswer, ignoreCase = true) == true
+                QuestionType.CHOICE -> {
+                    val correct = question.correctAnswer
+                        ?.equals(userAnswer.trim(), ignoreCase = true) == true
                     GradingResult(
                         score = if (correct) 100 else 0,
                         feedback = if (correct) "完全正确" else "答案错误",
@@ -94,6 +116,7 @@ class PracticeViewModel(
                         suggestions = if (!correct) "请记住正确答案" else ""
                     )
                 }
+
                 QuestionType.DEFINITION -> {
                     scorer?.evaluateDefinition(
                         question.stem,
@@ -101,6 +124,7 @@ class PracticeViewModel(
                         question.correctAnswer ?: ""
                     ) ?: GradingResult(0, "未配置 API Key", emptyList(), emptyList(), "")
                 }
+
                 QuestionType.SHORT_ANSWER, QuestionType.ESSAY -> {
                     scorer?.evaluateEssay(
                         question.stem,
@@ -108,17 +132,93 @@ class PracticeViewModel(
                         question.keywords ?: emptyList()
                     ) ?: GradingResult(0, "未配置 API Key", emptyList(), emptyList(), "")
                 }
+
                 else -> GradingResult(0, "暂不支持此题型", emptyList(), emptyList(), "")
             }
             _gradingResult.value = result
-            val record = StudyRecord(
-                packageName = question.packageName,
-                questionId = question.id,
-                userAnswer = userAnswer,
-                score = result.score,
-                isCorrect = result.score >= 60
+            repository.saveRecord(
+                StudyRecord(
+                    packageName = question.packageName,
+                    questionId = question.id,
+                    userAnswer = userAnswer,
+                    score = result.score,
+                    isCorrect = result.score >= 60
+                )
             )
-            repository.saveRecord(record)
+        }
+    }
+
+    private fun submitFillBlank(question: Question) {
+        val stemParts = question.stem.split(Regex("_{2,}"))
+        val blankCount = stemParts.size - 1
+        val userList = getFillBlankAnswers(question.id)
+
+        // 全空则视为未作答，不提交
+        if (userList.all { it.isBlank() }) {
+            _gradingResult.value = GradingResult(
+                score = 0,
+                feedback = "请至少填写一个空",
+                matchedPoints = emptyList(),
+                missingPoints = emptyList(),
+                suggestions = ""
+            )
+            return
+        }
+
+        val result: GradingResult
+        val combinedUserAnswer = userList.joinToString("; ")
+
+        if (blankCount <= 0) {
+            // 题干没有占位符 —— 退化为单空整体比较（兼容旧数据）
+            val u = userList.firstOrNull()?.trim() ?: ""
+            val correct = question.correctAnswer?.equals(u, ignoreCase = true) == true
+            result = GradingResult(
+                score = if (correct) 100 else 0,
+                feedback = if (correct) "正确" else "错误",
+                matchedPoints = if (correct) listOf("匹配") else emptyList(),
+                missingPoints = if (!correct) listOf("正确答案: ${question.correctAnswer}") else emptyList(),
+                suggestions = ""
+            )
+        } else {
+            // 标准答案按 ; 或 | 分空
+            val correctList = question.correctAnswer
+                ?.split(";","；", "|")
+                ?.map { it.trim() }
+                ?: emptyList()
+
+            var correctCount = 0
+            val wrongs = mutableListOf<String>()
+            for (i in 0 until blankCount) {
+                val u = userList.getOrNull(i)?.trim() ?: ""
+                val c = correctList.getOrNull(i)?.trim() ?: ""
+                if (u.equals(c, ignoreCase = true)) {
+                    correctCount++
+                } else {
+                    wrongs.add("第 ${i + 1} 空：你填「$u」，应为「$c」")
+                }
+            }
+            val score = if (blankCount > 0) correctCount * 100 / blankCount else 0
+            result = GradingResult(
+                score = score,
+                feedback = if (score == 100) "全部正确"
+                else "${blankCount - correctCount}/$blankCount 空错误",
+                matchedPoints = if (correctCount > 0) listOf("正确 $correctCount 空") else emptyList(),
+                missingPoints = wrongs,
+                suggestions = if (score < 100) "复习相关知识点" else ""
+            )
+        }
+
+        _gradingResult.value = result
+        viewModelScope.launch {
+            repository.saveRecord(
+                StudyRecord(
+                    packageName = question.packageName,
+                    questionId = question.id,
+                    userAnswer = combinedUserAnswer,
+                    score = result.score,
+                    isCorrect = result.score >= 60
+                )
+            )
         }
     }
 
@@ -132,7 +232,7 @@ class PracticeViewModel(
             if (userAns.equals(label.correctAnswer, ignoreCase = true)) {
                 correctCount++
             } else {
-                feedbacks.add("标签 ${index+1} 错误，应为 ${label.correctAnswer}")
+                feedbacks.add("标签 ${index + 1} 错误，应为 ${label.correctAnswer}")
             }
         }
         val score = if (labels.isNotEmpty()) (correctCount * 100 / labels.size) else 0

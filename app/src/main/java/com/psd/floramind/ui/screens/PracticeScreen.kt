@@ -48,7 +48,7 @@ fun PracticeScreen(
         viewModel.setApiKey(apiKey)
     }
 
-    // 加载数据并设置索引（挂起函数，可等待）
+    // 加载数据并设置索引
     LaunchedEffect(packageName, questionId) {
         viewModel.loadQuestionsForPackage(packageName)
         val qs = viewModel.questions.value
@@ -56,9 +56,8 @@ fun PracticeScreen(
         if (index >= 0) {
             viewModel.setCurrentIndex(index)
         } else if (qs.isNotEmpty()) {
-            viewModel.setCurrentIndex(0) // 若指定ID不存在，默认第一题
+            viewModel.setCurrentIndex(0)
         }
-        // 若qs为空，则不设置索引，UI显示“暂无题目”
     }
 
     val isLoading by viewModel.isLoading.collectAsState()
@@ -88,7 +87,6 @@ fun PracticeScreen(
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when {
                 isLoading -> {
-                    // 加载中
                     Column(
                         modifier = Modifier.fillMaxSize(),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -99,17 +97,16 @@ fun PracticeScreen(
                         Text("加载题目中...")
                     }
                 }
+
                 questions.isEmpty() -> {
-                    // 无数据
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("该题库包暂无题目")
                     }
                 }
+
                 else -> {
-                    // 有数据，获取当前题目
                     val question = questions.getOrNull(currentIndex)
                     if (question == null) {
-                        // 索引无效（理论上不会发生）
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text("当前题目不存在")
                         }
@@ -121,22 +118,27 @@ fun PracticeScreen(
                                 .padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            // 题干
-                            item {
-                                Text(
-                                    text = q.stem,
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                            // 题干（填空题的题干由 FillBlankInput 内部按空位分段渲染，这里仅显示非填空题题干）
+                            if (q.type != QuestionType.FILL_BLANK) {
+                                item {
+                                    Text(
+                                        text = q.stem,
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
 
                             // 题型输入
                             item {
                                 when (q.type) {
                                     QuestionType.CHOICE -> ChoiceInput(q, viewModel)
-                                    QuestionType.FILL_BLANK -> FillBlankInput(q, viewModel, userAnswers)
-                                    QuestionType.DEFINITION, QuestionType.SHORT_ANSWER, QuestionType.ESSAY ->
+                                    QuestionType.FILL_BLANK -> FillBlankInput(q, viewModel)
+                                    QuestionType.DEFINITION,
+                                    QuestionType.SHORT_ANSWER,
+                                    QuestionType.ESSAY ->
                                         EssayInput(q, viewModel, userAnswers)
+
                                     QuestionType.DIAGRAM -> DiagramInput(
                                         q = q,
                                         packageName = packageName,
@@ -154,6 +156,9 @@ fun PracticeScreen(
 
                             // 提交按钮
                             item {
+                                val needApiKey = q.type == QuestionType.DEFINITION ||
+                                        q.type == QuestionType.SHORT_ANSWER ||
+                                        q.type == QuestionType.ESSAY
                                 Button(
                                     onClick = {
                                         if (q.type == QuestionType.DIAGRAM) {
@@ -162,16 +167,22 @@ fun PracticeScreen(
                                             viewModel.submitCurrentAnswer()
                                         }
                                     },
+                                    enabled = !needApiKey || apiKey.isNotBlank(),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("提交答案")
+                                    Text(
+                                        when {
+                                            needApiKey && apiKey.isBlank() -> "请先在设置中配置 API Key"
+                                            else -> "提交答案"
+                                        }
+                                    )
                                 }
                             }
 
                             // 评分结果
-                            if (gradingResult != null) {
+                            gradingResult?.let { result ->
                                 item {
-                                    ResultCard(gradingResult!!)
+                                    ResultCard(result)
                                 }
                             }
 
@@ -228,7 +239,7 @@ fun PracticeScreen(
 @Composable
 private fun ChoiceInput(q: Question, viewModel: PracticeViewModel) {
     val options = q.options ?: emptyList()
-    var selected by remember { mutableStateOf<String?>(null) }
+    var selected by remember(q.id) { mutableStateOf<String?>(null) }
     Column {
         options.forEach { option ->
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -245,23 +256,65 @@ private fun ChoiceInput(q: Question, viewModel: PracticeViewModel) {
     }
 }
 
+/**
+ * 填空题输入：
+ * 题干中用 ___（两个及以上下划线）表示一个空位；
+ * correctAnswer 中用 ; 或 | 分隔每个空的答案。
+ * 若题干无占位符，则退化为单个输入框（兼容旧题库）。
+ */
 @Composable
-private fun FillBlankInput(q: Question, viewModel: PracticeViewModel, userAnswers: Map<Int, String>) {
-    var text by remember { mutableStateOf(userAnswers[q.id] ?: "") }
-    OutlinedTextField(
-        value = text,
-        onValueChange = {
-            text = it
-            viewModel.updateUserAnswer(it)
-        },
-        label = { Text("填入答案") },
-        modifier = Modifier.fillMaxWidth()
-    )
+private fun FillBlankInput(q: Question, viewModel: PracticeViewModel) {
+    val blankRegex = remember { Regex("_{2,}") }
+    val parts = remember(q.id, q.stem) { q.stem.split(blankRegex) }
+    val blankCount = parts.size - 1
+
+    val allAnswers by viewModel.fillBlankAnswers.collectAsState()
+    val answers = allAnswers[q.id] ?: emptyList()
+
+    if (blankCount <= 0) {
+        // 旧数据兼容：单输入框
+        val legacy = answers.firstOrNull() ?: ""
+        OutlinedTextField(
+            value = legacy,
+            onValueChange = { viewModel.updateFillBlankAnswer(q.id, 0, it) },
+            label = { Text("填入答案") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        return
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        parts.forEachIndexed { index, part ->
+            if (part.isNotBlank()) {
+                Text(
+                    text = part,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+            if (index < blankCount) {
+                val value = answers.getOrNull(index) ?: ""
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { newVal ->
+                        viewModel.updateFillBlankAnswer(q.id, index, newVal)
+                    },
+                    label = { Text("第 ${index + 1} 空") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
 }
 
 @Composable
-private fun EssayInput(q: Question, viewModel: PracticeViewModel, userAnswers: Map<Int, String>) {
-    var text by remember { mutableStateOf(userAnswers[q.id] ?: "") }
+private fun EssayInput(
+    q: Question,
+    viewModel: PracticeViewModel,
+    userAnswers: Map<Int, String>
+) {
+    var text by remember(q.id) { mutableStateOf(userAnswers[q.id] ?: "") }
     OutlinedTextField(
         value = text,
         onValueChange = {
@@ -288,7 +341,6 @@ private fun DiagramInput(
     val context = LocalContext.current
     Column {
         if (q.imageName != null) {
-            // 优先从内部存储加载，若不存在则从 assets 加载
             val imageFile = repository.getImageFile(packageName, q.imageName)
             val imageUri = if (imageFile != null && imageFile.exists()) {
                 imageFile
@@ -300,7 +352,7 @@ private fun DiagramInput(
                     .fillMaxWidth()
                     .height(300.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .pointerInput(Unit) {
+                    .pointerInput(q.id) {
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent()
@@ -326,9 +378,8 @@ private fun DiagramInput(
             }
         }
 
-        // 显示标签输入框
         val labels = q.labels ?: emptyList()
-        labels.forEachIndexed { index, label ->
+        labels.forEachIndexed { index, _ ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${index + 1}: ")
                 OutlinedTextField(
@@ -391,6 +442,8 @@ private fun DiagramLabelDialog(
 
 @Composable
 fun ResultCard(result: GradingResult) {
+    val matched = result.matchedPoints ?: emptyList()
+    val missing = result.missingPoints ?: emptyList()
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -401,11 +454,11 @@ fun ResultCard(result: GradingResult) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(text = "得分: ${result.score}", style = MaterialTheme.typography.titleMedium)
             Text(text = "反馈: ${result.feedback}")
-            if (result.matchedPoints!!.isNotEmpty()) {
-                Text(text = "✅ 匹配要点: ${result.matchedPoints.joinToString()}")
+            if (matched.isNotEmpty()) {
+                Text(text = "✅ 匹配要点: ${matched.joinToString()}")
             }
-            if (result.missingPoints!!.isNotEmpty()) {
-                Text(text = "❌ 缺失要点: ${result.missingPoints.joinToString()}")
+            if (missing.isNotEmpty()) {
+                Text(text = "❌ 缺失要点: ${missing.joinToString()}")
             }
             if (result.suggestions.isNotEmpty()) {
                 Text(text = "💡 建议: ${result.suggestions}")
