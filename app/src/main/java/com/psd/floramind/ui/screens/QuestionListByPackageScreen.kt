@@ -1,5 +1,6 @@
 package com.psd.floramind.ui.screens
 
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,7 +16,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.psd.floramind.model.Question
 import com.psd.floramind.repository.QuestionRepository
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,7 +26,6 @@ fun QuestionListByPackageScreen(
 ) {
     var questions by remember { mutableStateOf<List<Question>?>(null) }
     var isLoading by remember { mutableStateOf(true) }
-    val scope = rememberCoroutineScope()
 
     LaunchedEffect(packageName) {
         isLoading = true
@@ -37,7 +36,7 @@ fun QuestionListByPackageScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(packageName) },
+                title = { Text(packageName.substringAfterLast('/')) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
@@ -61,7 +60,10 @@ fun QuestionListByPackageScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    navController.navigate("practice/${question.packageName}/${question.id}")
+                                    // ★ 关键：包路径含 '/'，必须 encode
+                                    navController.navigate(
+                                        "practice/${Uri.encode(question.packageName)}/${question.id}"
+                                    )
                                 },
                             elevation = CardDefaults.cardElevation(2.dp)
                         ) {

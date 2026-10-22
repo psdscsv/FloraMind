@@ -24,7 +24,6 @@ class PracticeViewModel(
     private val _userAnswers = MutableStateFlow<MutableMap<Int, String>>(mutableMapOf())
     val userAnswers: StateFlow<Map<Int, String>> = _userAnswers.asStateFlow()
 
-    // 填空题多空答案：questionId -> 每一空的答案列表
     private val _fillBlankAnswers = MutableStateFlow<Map<Int, List<String>>>(emptyMap())
     val fillBlankAnswers: StateFlow<Map<Int, List<String>>> = _fillBlankAnswers.asStateFlow()
 
@@ -49,12 +48,21 @@ class PracticeViewModel(
             val list = repository.getQuestionsByPackage(packageName)
             _questions.value = list
             Log.d("PracticeVM", "Loaded ${list.size} questions for package '$packageName'")
-            if (list.isEmpty()) {
-                Log.w("PracticeVM", "No questions found for package '$packageName'")
-            }
         } catch (e: Exception) {
             Log.e("PracticeVM", "Failed to load questions", e)
             _questions.value = emptyList()
+        } finally {
+            _isLoading.value = false
+        }
+    }
+
+    // ★ 新增：从外部列表加载（筛选练习使用）
+    suspend fun loadQuestionsFromList(list: List<Question>) {
+        _isLoading.value = true
+        try {
+            _questions.value = list
+            _gradingResult.value = null
+            Log.d("PracticeVM", "Loaded ${list.size} questions from filter session")
         } finally {
             _isLoading.value = false
         }
@@ -79,7 +87,6 @@ class PracticeViewModel(
         return _userAnswers.value[id] ?: ""
     }
 
-    // ---------- 填空题多空答案 ----------
     fun updateFillBlankAnswer(questionId: Int, blankIndex: Int, text: String) {
         val current = _fillBlankAnswers.value[questionId]?.toMutableList() ?: mutableListOf()
         while (current.size <= blankIndex) current.add("")
@@ -90,11 +97,9 @@ class PracticeViewModel(
     fun getFillBlankAnswers(questionId: Int): List<String> =
         _fillBlankAnswers.value[questionId] ?: emptyList()
 
-    // ---------- 提交 ----------
     fun submitCurrentAnswer() {
         val question = _questions.value.getOrNull(_currentIndex.value) ?: return
 
-        // 填空题单独分流
         if (question.type == QuestionType.FILL_BLANK) {
             submitFillBlank(question)
             return
@@ -153,7 +158,6 @@ class PracticeViewModel(
         val blankCount = stemParts.size - 1
         val userList = getFillBlankAnswers(question.id)
 
-        // 全空则视为未作答，不提交
         if (userList.all { it.isBlank() }) {
             _gradingResult.value = GradingResult(
                 score = 0,
@@ -169,7 +173,6 @@ class PracticeViewModel(
         val combinedUserAnswer = userList.joinToString("; ")
 
         if (blankCount <= 0) {
-            // 题干没有占位符 —— 退化为单空整体比较（兼容旧数据）
             val u = userList.firstOrNull()?.trim() ?: ""
             val correct = question.correctAnswer?.equals(u, ignoreCase = true) == true
             result = GradingResult(
@@ -180,9 +183,8 @@ class PracticeViewModel(
                 suggestions = ""
             )
         } else {
-            // 标准答案按 ; 或 | 分空
             val correctList = question.correctAnswer
-                ?.split(";","；", "|")
+                ?.split(";", "；", "|")
                 ?.map { it.trim() }
                 ?: emptyList()
 

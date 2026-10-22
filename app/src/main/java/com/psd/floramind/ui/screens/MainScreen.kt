@@ -1,24 +1,28 @@
 package com.psd.floramind.ui.screens
 
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.psd.floramind.model.Question
+import com.psd.floramind.model.QuestionType
 import com.psd.floramind.repository.QuestionRepository
-import kotlinx.coroutines.launch
+import com.psd.floramind.session.PracticeSessionHolder
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen(navController: NavController, repository: QuestionRepository) {
     var selectedTab by remember { mutableStateOf(0) }
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         repository.loadBuiltInQuestionsIfEmpty()
@@ -65,60 +69,262 @@ fun MainScreen(navController: NavController, repository: QuestionRepository) {
     }
 }
 
+// ===== 题型中文名 =====
+private fun QuestionType.label(): String = when (this) {
+    QuestionType.DEFINITION -> "名词解释"
+    QuestionType.FILL_BLANK -> "填空"
+    QuestionType.CHOICE -> "选择"
+    QuestionType.SHORT_ANSWER -> "简答"
+    QuestionType.DIAGRAM -> "填图"
+    QuestionType.ESSAY -> "论述"
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PracticeStartScreen(repository: QuestionRepository, navController: NavController) {
-    var questions by remember { mutableStateOf<List<com.psd.floramind.model.Question>?>(null) }
+    var allQuestions by remember { mutableStateOf<List<Question>>(emptyList()) }
+    var allPackages by remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+
+    // 筛选状态
+    var selectedPackages by remember { mutableStateOf<Set<String>>(emptySet()) } // 空 = 全部
+    var selectedTypes by remember {
+        mutableStateOf<Set<QuestionType>>(QuestionType.entries.toSet()) // 默认全选
+    }
+    var showPackageDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         isLoading = true
-        questions = repository.getAllQuestions()
+        allQuestions = repository.getAllQuestions()
+        allPackages = repository.getAllPackages()
         isLoading = false
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text("启动后如果没有内置题库，可以在设置里恢复。\n因为没有放图片，所以识图题是空白的。另外由于部分填空题的答案是“略”，题库录入时并没有对此处理，所以看到超多空的填空题可以不管。", style = MaterialTheme.typography.headlineSmall)
-        Spacer(modifier = Modifier.height(16.dp))
+    val filteredQuestions = remember(allQuestions, selectedPackages, selectedTypes) {
+        allQuestions.filter { q ->
+            (selectedPackages.isEmpty() || q.packageName in selectedPackages) &&
+                    q.type in selectedTypes
+        }
+    }
 
-        when {
-            isLoading -> {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("筛选练习范围", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "提示：简答/论述/名词解释题会调用deepseek，因此点击提交后不要切题，几秒后会出现反馈；题库和题型默认全选，点击对应按钮可以取消；错题会自动记入错题本。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        if (isLoading) {
+            Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("加载题库中...")
             }
-            questions.isNullOrEmpty() -> {
-                Text("题库为空，请检查 assets/question_bank.json 是否存在")
-            }
-            else -> {
-                val list = questions!!
-                Button(
-                    onClick = {
-                        if (list.isNotEmpty()) {
-                            val random = list.random()
-                            navController.navigate("practice/${Uri.encode(random.packageName)}/${random.id}")
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
+            return@Column
+        }
+
+        // ---------- 题型筛选 ----------
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("随机练习")
+                    Text("题型", style = MaterialTheme.typography.titleMedium)
+                    Row {
+                        TextButton(onClick = {
+                            selectedTypes = QuestionType.entries.toSet()
+                        }) { Text("全选") }
+                        TextButton(onClick = { selectedTypes = emptySet() }) { Text("清空") }
+                    }
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        if (list.isNotEmpty()) {
-                            val first = list.first()
-                            navController.navigate("practice/${Uri.encode(first.packageName)}/${first.id}")
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text("从第一题开始")
+                    QuestionType.entries.forEach { type ->
+                        FilterChip(
+                            selected = type in selectedTypes,
+                            onClick = {
+                                selectedTypes = if (type in selectedTypes) {
+                                    selectedTypes - type
+                                } else {
+                                    selectedTypes + type
+                                }
+                            },
+                            label = { Text(type.label()) }
+                        )
+                    }
                 }
             }
         }
+
+        // ---------- 题库筛选 ----------
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("题库", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        when {
+                            selectedPackages.isEmpty() -> "全部（${allPackages.size} 个）"
+                            selectedPackages.size == 1 -> selectedPackages.first().substringAfterLast('/')
+                            else -> "${selectedPackages.size} 个"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Button(
+                    onClick = { showPackageDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("选择题库范围")
+                }
+            }
+        }
+
+        // ---------- 结果统计 ----------
+        Text(
+            "筛选结果：${filteredQuestions.size} 道题目",
+            style = MaterialTheme.typography.titleMedium,
+            color = if (filteredQuestions.isEmpty())
+                MaterialTheme.colorScheme.error
+            else
+                MaterialTheme.colorScheme.primary
+        )
+
+        if (filteredQuestions.isEmpty()) {
+            Text(
+                "请至少选择一种题型和一个题库",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        // ---------- 开始按钮 ----------
+        Button(
+            onClick = {
+                val list = filteredQuestions
+                if (list.isEmpty()) return@Button
+                PracticeSessionHolder.pendingQuestions = list
+                PracticeSessionHolder.startIndex = list.indices.random()
+                navController.navigate("practice_filtered")
+            },
+            enabled = filteredQuestions.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("开始练习（随机）")
+        }
+
+        Button(
+            onClick = {
+                val list = filteredQuestions
+                if (list.isEmpty()) return@Button
+                PracticeSessionHolder.pendingQuestions = list
+                PracticeSessionHolder.startIndex = 0
+                navController.navigate("practice_filtered")
+            },
+            enabled = filteredQuestions.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("开始练习（顺序）")
+        }
     }
+
+    // ---------- 题库选择对话框 ----------
+    if (showPackageDialog) {
+        PackageSelectorDialog(
+            allPackages = allPackages,
+            selected = selectedPackages,
+            onDismiss = { showPackageDialog = false },
+            onConfirm = {
+                selectedPackages = it
+                showPackageDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+fun PackageSelectorDialog(
+    allPackages: List<String>,
+    selected: Set<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (Set<String>) -> Unit
+) {
+    var localSelected by remember { mutableStateOf(selected) }
+    val sortedPackages = remember(allPackages) { allPackages.sorted() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("选择题库范围") },
+        text = {
+            Column(modifier = Modifier.heightIn(max = 420.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { localSelected = sortedPackages.toSet() }) { Text("全选") }
+                    TextButton(onClick = { localSelected = emptySet() }) { Text("清空") }
+                }
+                Text(
+                    "不勾选任何项 = 全部题库",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
+
+                LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                    items(sortedPackages, key = { it }) { pkg ->
+                        val depth = pkg.count { it == '/' }
+                        val checked = pkg in localSelected
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    localSelected = if (checked) localSelected - pkg
+                                    else localSelected + pkg
+                                }
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { c ->
+                                    localSelected = if (c) localSelected + pkg
+                                    else localSelected - pkg
+                                }
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "   ".repeat(depth) + pkg.substringAfterLast('/'),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(localSelected) }) { Text("确定") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
 }

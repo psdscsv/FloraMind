@@ -54,7 +54,10 @@ fun MistakeScreen(repository: QuestionRepository, navController: NavController) 
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { navController.navigate("mistakes_detail/${Uri.encode(pkg)}") },
+                    .clickable {
+                        // ★ 包路径含 '/'，必须 encode
+                        navController.navigate("mistakes_detail/${Uri.encode(pkg)}")
+                    },
                 elevation = CardDefaults.cardElevation(2.dp)
             ) {
                 Row(
@@ -64,7 +67,11 @@ fun MistakeScreen(repository: QuestionRepository, navController: NavController) 
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(text = pkg, style = MaterialTheme.typography.titleMedium)
+                        // 显示末段名（完整路径太长）
+                        Text(
+                            text = pkg.substringAfterLast('/'),
+                            style = MaterialTheme.typography.titleMedium
+                        )
                         Text(
                             text = "$count 道错题",
                             style = MaterialTheme.typography.bodySmall,

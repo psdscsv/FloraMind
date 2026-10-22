@@ -26,7 +26,6 @@ import com.psd.floramind.model.network.GradingResult
 import com.psd.floramind.repository.QuestionRepository
 import com.psd.floramind.viewmodel.PracticeViewModel
 import kotlinx.coroutines.launch
-import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,7 +33,9 @@ fun PracticeScreen(
     packageName: String,
     questionId: Int,
     repository: QuestionRepository,
-    navController: NavController
+    navController: NavController,
+    questionsOverride: List<Question>? = null,   // ★ 新增：筛选练习时传入
+    startIndexOverride: Int? = null              // ★ 新增：筛选练习起始索引
 ) {
     val context = LocalContext.current
     val dataStore = remember { DataStoreManager(context) }
@@ -48,15 +49,21 @@ fun PracticeScreen(
         viewModel.setApiKey(apiKey)
     }
 
-    // 加载数据并设置索引
-    LaunchedEffect(packageName, questionId) {
-        viewModel.loadQuestionsForPackage(packageName)
-        val qs = viewModel.questions.value
-        val index = qs.indexOfFirst { it.id == questionId }
-        if (index >= 0) {
-            viewModel.setCurrentIndex(index)
-        } else if (qs.isNotEmpty()) {
-            viewModel.setCurrentIndex(0)
+    // ★ 加载逻辑：优先用外部传入的列表，否则按包加载
+    LaunchedEffect(packageName, questionId, questionsOverride, startIndexOverride) {
+        if (questionsOverride != null && questionsOverride.isNotEmpty()) {
+            viewModel.loadQuestionsFromList(questionsOverride)
+            val idx = startIndexOverride?.coerceIn(0, questionsOverride.size - 1) ?: 0
+            viewModel.setCurrentIndex(idx)
+        } else {
+            viewModel.loadQuestionsForPackage(packageName)
+            val qs = viewModel.questions.value
+            val index = qs.indexOfFirst { it.id == questionId }
+            if (index >= 0) {
+                viewModel.setCurrentIndex(index)
+            } else if (qs.isNotEmpty()) {
+                viewModel.setCurrentIndex(0)
+            }
         }
     }
 
@@ -67,7 +74,6 @@ fun PracticeScreen(
     val userAnswers by viewModel.userAnswers.collectAsState()
     val scope = rememberCoroutineScope()
 
-    // 填图题专用状态
     var diagramAnswers by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var showCoordinateDialog by remember { mutableStateOf(false) }
     var clickedPoint by remember { mutableStateOf<Offset?>(null) }
@@ -118,7 +124,6 @@ fun PracticeScreen(
                                 .padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            // 题干（填空题的题干由 FillBlankInput 内部按空位分段渲染，这里仅显示非填空题题干）
                             if (q.type != QuestionType.FILL_BLANK) {
                                 item {
                                     Text(
@@ -129,7 +134,6 @@ fun PracticeScreen(
                                 }
                             }
 
-                            // 题型输入
                             item {
                                 when (q.type) {
                                     QuestionType.CHOICE -> ChoiceInput(q, viewModel)
@@ -154,7 +158,6 @@ fun PracticeScreen(
                                 }
                             }
 
-                            // 提交按钮
                             item {
                                 val needApiKey = q.type == QuestionType.DEFINITION ||
                                         q.type == QuestionType.SHORT_ANSWER ||
@@ -179,14 +182,10 @@ fun PracticeScreen(
                                 }
                             }
 
-                            // 评分结果
                             gradingResult?.let { result ->
-                                item {
-                                    ResultCard(result)
-                                }
+                                item { ResultCard(result) }
                             }
 
-                            // 导航按钮
                             item {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -195,21 +194,23 @@ fun PracticeScreen(
                                     Button(
                                         onClick = {
                                             val prev = currentIndex - 1
-                                            if (prev >= 0) viewModel.setCurrentIndex(prev)
+                                            if (prev >= 0) {
+                                                diagramAnswers = emptyMap()
+                                                viewModel.setCurrentIndex(prev)
+                                            }
                                         },
                                         enabled = currentIndex > 0
-                                    ) {
-                                        Text("上一题")
-                                    }
+                                    ) { Text("上一题") }
                                     Button(
                                         onClick = {
                                             val next = currentIndex + 1
-                                            if (next < questions.size) viewModel.setCurrentIndex(next)
+                                            if (next < questions.size) {
+                                                diagramAnswers = emptyMap()
+                                                viewModel.setCurrentIndex(next)
+                                            }
                                         },
                                         enabled = currentIndex < questions.size - 1
-                                    ) {
-                                        Text("下一题")
-                                    }
+                                    ) { Text("下一题") }
                                 }
                             }
                         }
@@ -217,7 +218,6 @@ fun PracticeScreen(
                 }
             }
 
-            // 坐标输入对话框（仅填图题）
             if (showCoordinateDialog && clickedPoint != null) {
                 val labels = questions.getOrNull(currentIndex)?.labels ?: emptyList()
                 DiagramLabelDialog(
@@ -234,7 +234,7 @@ fun PracticeScreen(
     }
 }
 
-// ===== 各题型输入组件 =====
+// ===== 以下子组件保持不变（与原文件一致） =====
 
 @Composable
 private fun ChoiceInput(q: Question, viewModel: PracticeViewModel) {
@@ -256,12 +256,6 @@ private fun ChoiceInput(q: Question, viewModel: PracticeViewModel) {
     }
 }
 
-/**
- * 填空题输入：
- * 题干中用 ___（两个及以上下划线）表示一个空位；
- * correctAnswer 中用 ; 或 | 分隔每个空的答案。
- * 若题干无占位符，则退化为单个输入框（兼容旧题库）。
- */
 @Composable
 private fun FillBlankInput(q: Question, viewModel: PracticeViewModel) {
     val blankRegex = remember { Regex("_{2,}") }
@@ -272,7 +266,6 @@ private fun FillBlankInput(q: Question, viewModel: PracticeViewModel) {
     val answers = allAnswers[q.id] ?: emptyList()
 
     if (blankCount <= 0) {
-        // 旧数据兼容：单输入框
         val legacy = answers.firstOrNull() ?: ""
         OutlinedTextField(
             value = legacy,
@@ -341,7 +334,7 @@ private fun DiagramInput(
     val context = LocalContext.current
     Column {
         if (q.imageName != null) {
-            val imageFile = repository.getImageFile(packageName, q.imageName)
+            val imageFile = repository.getImageFile(q.packageName, q.imageName)
             val imageUri = if (imageFile != null && imageFile.exists()) {
                 imageFile
             } else {
