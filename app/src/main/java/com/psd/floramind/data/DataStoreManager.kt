@@ -25,6 +25,8 @@ class DataStoreManager(context: Context) {
         // ---------- 公告已读 ----------
         val LAST_READ_ANN_ID = stringPreferencesKey("last_read_ann_id")
         val LAST_READ_ANN_UPDATED = longPreferencesKey("last_read_ann_updated")
+
+        const val DEFAULT_SERVER_URL = "http://8.138.243.178"
     }
 
     // ============================================================
@@ -44,7 +46,10 @@ class DataStoreManager(context: Context) {
 
     /** 服务器地址，空字符串表示未配置 */
     val serverUrlFlow: Flow<String> = dataStore.data
-        .map { preferences -> preferences[SERVER_URL] ?: "" }
+        .map { preferences ->
+            val saved = preferences[SERVER_URL]
+            if (saved.isNullOrBlank()) DEFAULT_SERVER_URL else saved
+        }
 
     suspend fun saveUserName(name: String) {
         dataStore.edit { preferences -> preferences[USER_NAME] = name }
@@ -57,8 +62,12 @@ class DataStoreManager(context: Context) {
     suspend fun saveServerUrl(url: String) {
         dataStore.edit { preferences ->
             val trimmed = url.trim()
-            if (trimmed.isEmpty()) preferences.remove(SERVER_URL)
-            else preferences[SERVER_URL] = trimmed
+            if (trimmed.isEmpty() || trimmed == DEFAULT_SERVER_URL) {
+                // 存的是默认值或空 → 删 key，让 Flow 回退默认
+                preferences.remove(SERVER_URL)
+            } else {
+                preferences[SERVER_URL] = trimmed
+            }
         }
     }
 
