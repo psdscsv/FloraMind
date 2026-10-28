@@ -36,3 +36,14 @@ data class SimpleResponse(
     val message: String? = null,
     val id: String? = null
 )
+
+data class Announcement(
+    val id: String,
+    val title: String,
+    val content: String,
+    @SerializedName("updated_time") val updatedTime: Long = 0
+)
+
+data class AnnouncementResponse(
+    val announcement: Announcement? = null
+)

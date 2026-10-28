@@ -26,4 +26,7 @@ interface ServerApi {
 
     @POST("api/feedback")
     suspend fun submitFeedback(@Body request: FeedbackRequest): SimpleResponse
+
+    @GET("api/announcement")
+    suspend fun getAnnouncement(): AnnouncementResponse
 }

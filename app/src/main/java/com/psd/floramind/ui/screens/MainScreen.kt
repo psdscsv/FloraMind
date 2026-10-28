@@ -18,6 +18,12 @@ import com.psd.floramind.model.Question
 import com.psd.floramind.model.QuestionType
 import com.psd.floramind.repository.QuestionRepository
 import com.psd.floramind.session.PracticeSessionHolder
+import androidx.compose.ui.platform.LocalContext
+import com.psd.floramind.data.DataStoreManager
+import com.psd.floramind.model.network.Announcement
+import com.psd.floramind.repository.ServerRepository
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -27,9 +33,31 @@ fun MainScreen(
     serverRepository: com.psd.floramind.repository.ServerRepository
 ) {
     var selectedTab by remember { mutableStateOf(0) }
+    // ★ 公告状态
+    val context = LocalContext.current
+    val dataStore = remember { DataStoreManager(context) }
+    val scope = rememberCoroutineScope()
+    var announcement by remember { mutableStateOf<Announcement?>(null) }
 
     LaunchedEffect(Unit) {
         repository.loadBuiltInQuestionsIfEmpty()
+    }
+
+    // ★ 启动时拉取公告
+    LaunchedEffect(Unit) {
+        val url = dataStore.serverUrlFlow.first()
+        if (url.isBlank()) return@LaunchedEffect
+
+        serverRepository.getAnnouncement()
+            .onSuccess { ann ->
+                if (ann != null) {
+                    val lastId = dataStore.lastReadAnnIdFlow.first()
+                    val lastUpdated = dataStore.lastReadAnnUpdatedFlow.first()
+                    if (ann.id != lastId || ann.updatedTime != lastUpdated) {
+                        announcement = ann
+                    }
+                }
+            }
     }
 
     Scaffold(
@@ -70,6 +98,18 @@ fun MainScreen(
                 3 -> SettingsScreen(repository, serverRepository, navController)
             }
         }
+    }
+    // ★ 弹窗
+    announcement?.let { ann ->
+        AnnouncementDialog(
+            announcement = ann,
+            onClose = {
+                scope.launch {
+                    dataStore.markAnnouncementRead(ann.id, ann.updatedTime)
+                }
+                announcement = null
+            }
+        )
     }
 }
 

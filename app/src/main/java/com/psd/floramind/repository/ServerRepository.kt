@@ -133,4 +133,14 @@ class ServerRepository(
             Result.failure(e)
         }
     }
+
+    suspend fun getAnnouncement(): Result<Announcement?> = withContext(Dispatchers.IO) {
+        try {
+            val url = dataStore.serverUrlFlow.first()
+            if (url.isBlank()) return@withContext Result.success(null)
+            Result.success(getApi().getAnnouncement().announcement)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 }
