@@ -126,16 +126,37 @@ private fun QuestionType.label(): String = when (this) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PracticeStartScreen(repository: QuestionRepository, navController: NavController) {
+    val context = LocalContext.current
+    val dataStore = remember { DataStoreManager(context) }
+    val scope = rememberCoroutineScope()
+
     var allQuestions by remember { mutableStateOf<List<Question>>(emptyList()) }
     var allPackages by remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
-    // 筛选状态
-    var selectedPackages by remember { mutableStateOf<Set<String>>(emptySet()) } // 空 = 全部
-    var selectedTypes by remember {
-        mutableStateOf<Set<QuestionType>>(QuestionType.entries.toSet()) // 默认全选
-    }
+    // 题库筛选（本会话，不入库；空 = 全部）
+    var selectedPackages by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    // ★ 题型筛选：初始为空集合（= 全选语义）
+    var selectedTypes by remember { mutableStateOf<Set<QuestionType>>(emptySet()) }
+    // 首次读 DataStore 完成前不渲染，避免闪动
+    var typesLoaded by remember { mutableStateOf(false) }
+
     var showPackageDialog by remember { mutableStateOf(false) }
+
+    // ★ 加载一次 DataStore 中持久化的题型
+    LaunchedEffect(Unit) {
+        val saved = dataStore.selectedTypesFlow.first()
+        selectedTypes = saved
+        typesLoaded = true
+    }
+
+    // 每次题型变化 → 写回 DataStore
+    LaunchedEffect(selectedTypes, typesLoaded) {
+        if (typesLoaded) {
+            dataStore.saveSelectedTypes(selectedTypes)
+        }
+    }
 
     LaunchedEffect(Unit) {
         isLoading = true
@@ -144,10 +165,15 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
         isLoading = false
     }
 
-    val filteredQuestions = remember(allQuestions, selectedPackages, selectedTypes) {
+    // ★ 空集合 = 全选
+    val effectiveTypes: Set<QuestionType> =
+        if (selectedTypes.isEmpty()) QuestionType.entries.toSet()
+        else selectedTypes
+
+    val filteredQuestions = remember(allQuestions, selectedPackages, effectiveTypes) {
         allQuestions.filter { q ->
             (selectedPackages.isEmpty() || q.packageName in selectedPackages) &&
-                    q.type in selectedTypes
+                    q.type in effectiveTypes
         }
     }
 
@@ -159,15 +185,14 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
     ) {
         Text("筛选练习范围", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "提示：简答/论述/名词解释题会调用deepseek，因此点击提交后不要切题，几秒后会出现反馈；题库和题型默认全选，点击对应按钮可以取消；错题会自动记入错题本。",
+            "提示：简答/论述/名词解释题会调用deepseek，因此点击提交后不要切题，几秒后会出现反馈；" +
+                    "题库默认全部，题型不选视为全选；错题会自动记入错题本。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        if (isLoading) {
-            Box(Modifier
-                .fillMaxWidth()
-                .padding(32.dp), contentAlignment = Alignment.Center) {
+        if (isLoading || !typesLoaded) {
+            Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
             return@Column
@@ -187,11 +212,23 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
                     Text("题型", style = MaterialTheme.typography.titleMedium)
                     Row {
                         TextButton(onClick = {
-                            selectedTypes = QuestionType.entries.toSet()
+                            // 全选 = 清空（空即全选）
+                            selectedTypes = emptySet()
                         }) { Text("全选") }
-                        TextButton(onClick = { selectedTypes = emptySet() }) { Text("清空") }
+                        TextButton(onClick = {
+                            // 全不选 = 一个都不选，但语义上是"全选"，用户想全部取消时用"清空"
+                            // 这里提供"清空"其实是回到默认空集，与全选相同。
+                            // 为了直观：清空 = 空集（即全选），下面提示文字已说明。
+                            selectedTypes = emptySet()
+                        }) { Text("清空") }
                     }
                 }
+                Text(
+                    if (selectedTypes.isEmpty()) "当前：全选（未勾选任何项 = 全选）"
+                    else "当前：已选 ${selectedTypes.size}/${QuestionType.entries.size} 种",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -229,9 +266,7 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
                     Text(
                         when {
                             selectedPackages.isEmpty() -> "全部（${allPackages.size} 个）"
-                            selectedPackages.size == 1 -> selectedPackages.first()
-                                .substringAfterLast('/')
-
+                            selectedPackages.size == 1 -> selectedPackages.first().substringAfterLast('/')
                             else -> "${selectedPackages.size} 个"
                         },
                         style = MaterialTheme.typography.bodyMedium,
@@ -259,7 +294,7 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
 
         if (filteredQuestions.isEmpty()) {
             Text(
-                "请至少选择一种题型和一个题库",
+                "请至少选择一个题库",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error
             )
@@ -267,21 +302,23 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
 
         Spacer(Modifier.weight(1f))
 
-        // ---------- 开始按钮 ----------
+        // ---------- 开始练习（随机起点） ----------
         Button(
             onClick = {
                 val list = filteredQuestions
                 if (list.isEmpty()) return@Button
                 PracticeSessionHolder.pendingQuestions = list
+                // ★ 只随机起始下标，上一题/下一题仍按列表顺序
                 PracticeSessionHolder.startIndex = list.indices.random()
                 navController.navigate("practice_filtered")
             },
             enabled = filteredQuestions.isNotEmpty(),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("开始练习（随机）")
+            Text("开始练习（随机起点）")
         }
 
+        // ---------- 开始练习（顺序） ----------
         Button(
             onClick = {
                 val list = filteredQuestions
@@ -293,7 +330,7 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
             enabled = filteredQuestions.isNotEmpty(),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("开始练习（顺序）")
+            Text("开始练习（从头）")
         }
     }
 
