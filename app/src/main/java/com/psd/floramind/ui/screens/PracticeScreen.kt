@@ -16,6 +16,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
@@ -25,7 +26,6 @@ import com.psd.floramind.model.QuestionType
 import com.psd.floramind.model.network.GradingResult
 import com.psd.floramind.repository.QuestionRepository
 import com.psd.floramind.viewmodel.PracticeViewModel
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,22 +34,26 @@ fun PracticeScreen(
     questionId: Int,
     repository: QuestionRepository,
     navController: NavController,
-    questionsOverride: List<Question>? = null,   // ★ 新增：筛选练习时传入
-    startIndexOverride: Int? = null              // ★ 新增：筛选练习起始索引
+    questionsOverride: List<Question>? = null,
+    startIndexOverride: Int? = null
 ) {
     val context = LocalContext.current
     val dataStore = remember { DataStoreManager(context) }
     var apiKey by remember { mutableStateOf("") }
+
+    // ★ 先创建 ViewModel（初始 apiKey 传空串，后续通过 setApiKey 更新）
+    val viewModel = remember { PracticeViewModel(repository, "") }
+
+    // ★ 监听 apiKey 变化，仅非空时同步给 ViewModel
     LaunchedEffect(Unit) {
-        dataStore.apiKeyFlow.collect { apiKey = it }
+        dataStore.apiKeyFlow.collect { key ->
+            apiKey = key
+            if (key.isNotBlank()) {
+                viewModel.setApiKey(key)
+            }
+        }
     }
 
-    val viewModel = remember { PracticeViewModel(repository, apiKey) }
-    LaunchedEffect(apiKey) {
-        viewModel.setApiKey(apiKey)
-    }
-
-    // ★ 加载逻辑：优先用外部传入的列表，否则按包加载
     LaunchedEffect(packageName, questionId, questionsOverride, startIndexOverride) {
         if (questionsOverride != null && questionsOverride.isNotEmpty()) {
             viewModel.loadQuestionsFromList(questionsOverride)
@@ -72,7 +76,9 @@ fun PracticeScreen(
     val currentIndex by viewModel.currentIndex.collectAsState()
     val gradingResult by viewModel.gradingResult.collectAsState()
     val userAnswers by viewModel.userAnswers.collectAsState()
-    val scope = rememberCoroutineScope()
+
+    // ★ 修改 4：提交中的 UI 状态由 ViewModel 控制
+    val isSubmitting by viewModel.isSubmitting.collectAsState()
 
     var diagramAnswers by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var showCoordinateDialog by remember { mutableStateOf(false) }
@@ -162,6 +168,8 @@ fun PracticeScreen(
                                 val needApiKey = q.type == QuestionType.DEFINITION ||
                                         q.type == QuestionType.SHORT_ANSWER ||
                                         q.type == QuestionType.ESSAY
+                                val apiKeyMissing = needApiKey && apiKey.isBlank()
+
                                 Button(
                                     onClick = {
                                         if (q.type == QuestionType.DIAGRAM) {
@@ -170,15 +178,25 @@ fun PracticeScreen(
                                             viewModel.submitCurrentAnswer()
                                         }
                                     },
-                                    enabled = !needApiKey || apiKey.isNotBlank(),
+                                    enabled = !isSubmitting && !apiKeyMissing,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text(
-                                        when {
-                                            needApiKey && apiKey.isBlank() -> "请先在设置中配置 API Key"
-                                            else -> "提交答案"
-                                        }
-                                    )
+                                    if (isSubmitting) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp,
+                                            color = LocalContentColor.current
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("评分中...")
+                                    } else {
+                                        Text(
+                                            when {
+                                                apiKeyMissing -> "请先在设置中配置 API Key"
+                                                else -> "提交答案"
+                                            }
+                                        )
+                                    }
                                 }
                             }
 
@@ -199,7 +217,7 @@ fun PracticeScreen(
                                                 viewModel.setCurrentIndex(prev)
                                             }
                                         },
-                                        enabled = currentIndex > 0
+                                        enabled = currentIndex > 0 && !isSubmitting
                                     ) { Text("上一题") }
                                     Button(
                                         onClick = {
@@ -209,7 +227,7 @@ fun PracticeScreen(
                                                 viewModel.setCurrentIndex(next)
                                             }
                                         },
-                                        enabled = currentIndex < questions.size - 1
+                                        enabled = currentIndex < questions.size - 1 && !isSubmitting
                                     ) { Text("下一题") }
                                 }
                             }
@@ -234,7 +252,7 @@ fun PracticeScreen(
     }
 }
 
-// ===== 以下子组件保持不变（与原文件一致） =====
+// ===== 以下子组件保持不变 =====
 
 @Composable
 private fun ChoiceInput(q: Question, viewModel: PracticeViewModel) {
@@ -453,7 +471,7 @@ fun ResultCard(result: GradingResult) {
             if (missing.isNotEmpty()) {
                 Text(text = "❌ 缺失要点: ${missing.joinToString()}")
             }
-            if (result.suggestions.isNotEmpty()) {
+            if (!result.suggestions.isNullOrEmpty()) {
                 Text(text = "💡 建议: ${result.suggestions}")
             }
         }

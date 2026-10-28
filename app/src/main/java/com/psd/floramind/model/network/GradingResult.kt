@@ -5,5 +5,5 @@ data class GradingResult(
     val feedback: String = "",
     val matchedPoints: List<String>? = null,
     val missingPoints: List<String>? = null,
-    val suggestions: String = ""
+    val suggestions: String? = ""
 )
