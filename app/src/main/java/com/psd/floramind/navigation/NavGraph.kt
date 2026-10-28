@@ -8,16 +8,20 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.psd.floramind.repository.QuestionRepository
+import com.psd.floramind.repository.ServerRepository
 import com.psd.floramind.session.PracticeSessionHolder
 import com.psd.floramind.ui.screens.*
 
 @Composable
-fun NavGraph(repository: QuestionRepository) {
+fun NavGraph(
+    repository: QuestionRepository,
+    serverRepository: ServerRepository
+) {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = "main") {
 
         composable("main") {
-            MainScreen(navController, repository)
+            MainScreen(navController, repository, serverRepository)
         }
 
         composable(
@@ -32,11 +36,9 @@ fun NavGraph(repository: QuestionRepository) {
             PracticeScreen(packageName, questionId, repository, navController)
         }
 
-        // ★ 新增：筛选练习入口
         composable("practice_filtered") {
             val qs = PracticeSessionHolder.pendingQuestions
             if (qs.isEmpty()) {
-                // 异常情况（例如进程重建后单例被清空），退回主界面
                 LaunchedEffect(Unit) { navController.popBackStack() }
             } else {
                 val startIdx = PracticeSessionHolder.startIndex.coerceIn(0, qs.size - 1)
@@ -60,9 +62,13 @@ fun NavGraph(repository: QuestionRepository) {
             MistakeDetailScreen(packageName, repository, navController)
         }
 
-        composable("settings") { SettingsScreen(repository) }
+        composable("settings") {
+            SettingsScreen(repository, serverRepository, navController)
+        }
 
-        composable("packages") { PackageListScreen(repository, navController) }
+        composable("packages") {
+            PackageListScreen(repository, serverRepository, navController)
+        }
 
         composable(
             "package_questions/{packageName}",
@@ -70,6 +76,16 @@ fun NavGraph(repository: QuestionRepository) {
         ) { backStackEntry ->
             val packageName = backStackEntry.arguments?.getString("packageName") ?: ""
             QuestionListByPackageScreen(packageName, repository, navController)
+        }
+
+        // ★ 新增：服务器题库
+        composable("server_packages") {
+            ServerPackageListScreen(serverRepository, repository, navController)
+        }
+
+        // ★ 新增：意见反馈
+        composable("feedback") {
+            FeedbackScreen(serverRepository, navController)
         }
     }
 }

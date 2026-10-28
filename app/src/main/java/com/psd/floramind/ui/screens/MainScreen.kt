@@ -21,7 +21,11 @@ import com.psd.floramind.session.PracticeSessionHolder
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun MainScreen(navController: NavController, repository: QuestionRepository) {
+fun MainScreen(
+    navController: NavController,
+    repository: QuestionRepository,
+    serverRepository: com.psd.floramind.repository.ServerRepository
+) {
     var selectedTab by remember { mutableStateOf(0) }
 
     LaunchedEffect(Unit) {
@@ -61,9 +65,9 @@ fun MainScreen(navController: NavController, repository: QuestionRepository) {
         Box(modifier = Modifier.padding(padding)) {
             when (selectedTab) {
                 0 -> PracticeStartScreen(repository, navController)
-                1 -> PackageListScreen(repository, navController)
+                1 -> PackageListScreen(repository, serverRepository, navController)
                 2 -> MistakeScreen(repository, navController)
-                3 -> SettingsScreen(repository)
+                3 -> SettingsScreen(repository, serverRepository, navController)
             }
         }
     }
@@ -121,7 +125,9 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
         )
 
         if (isLoading) {
-            Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier
+                .fillMaxWidth()
+                .padding(32.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
             return@Column
@@ -183,7 +189,9 @@ fun PracticeStartScreen(repository: QuestionRepository, navController: NavContro
                     Text(
                         when {
                             selectedPackages.isEmpty() -> "全部（${allPackages.size} 个）"
-                            selectedPackages.size == 1 -> selectedPackages.first().substringAfterLast('/')
+                            selectedPackages.size == 1 -> selectedPackages.first()
+                                .substringAfterLast('/')
+
                             else -> "${selectedPackages.size} 个"
                         },
                         style = MaterialTheme.typography.bodyMedium,
@@ -279,7 +287,9 @@ fun PackageSelectorDialog(
         text = {
             Column(modifier = Modifier.heightIn(max = 420.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { localSelected = sortedPackages.toSet() }) { Text("全选") }
+                    TextButton(onClick = {
+                        localSelected = sortedPackages.toSet()
+                    }) { Text("全选") }
                     TextButton(onClick = { localSelected = emptySet() }) { Text("清空") }
                 }
                 Text(

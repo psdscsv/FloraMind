@@ -17,14 +17,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import com.psd.floramind.repository.*
+import com.psd.floramind.data.DataStoreManager
+import com.psd.floramind.repository.FolderItem
+import com.psd.floramind.repository.PackageItem
+import com.psd.floramind.repository.QuestionRepository
+import com.psd.floramind.repository.ServerRepository
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun PackageListScreen(repository: QuestionRepository, navController: NavController) {
+fun PackageListScreen(
+    repository: QuestionRepository,
+    serverRepository: ServerRepository,
+    navController: NavController
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // ---------- 上传者名字 ----------
+    val dataStore = remember { DataStoreManager(context) }
+    var uploaderName by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        dataStore.userNameFlow.collect { uploaderName = it }
+    }
 
     var currentFolderPath by remember { mutableStateOf("") }
     var folders by remember { mutableStateOf<List<FolderItem>>(emptyList()) }
@@ -42,6 +57,11 @@ fun PackageListScreen(repository: QuestionRepository, navController: NavControll
     var itemToDelete by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var itemToMove by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var moveTarget by remember { mutableStateOf("") }
+
+    // ★ 上传对话框状态
+    var uploadingPkg by remember { mutableStateOf<PackageItem?>(null) }
+    var uploadDescription by remember { mutableStateOf("") }
+    var isUploading by remember { mutableStateOf(false) }
 
     suspend fun refresh() {
         isLoading = true
@@ -98,6 +118,10 @@ fun PackageListScreen(repository: QuestionRepository, navController: NavControll
                     }
                 },
                 actions = {
+                    // ★ 服务器题库入口
+                    IconButton(onClick = { navController.navigate("server_packages") }) {
+                        Icon(Icons.Default.Cloud, "服务器题库")
+                    }
                     IconButton(onClick = { newFolderName = ""; showCreateFolder = true }) {
                         Icon(Icons.Default.CreateNewFolder, "新建文件夹")
                     }
@@ -113,7 +137,9 @@ fun PackageListScreen(repository: QuestionRepository, navController: NavControll
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+                isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    CircularProgressIndicator()
+                }
                 folders.isEmpty() && packages.isEmpty() ->
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
                         Text("当前文件夹为空，点击右上角导入或新建")
@@ -190,6 +216,13 @@ fun PackageListScreen(repository: QuestionRepository, navController: NavControll
                                     Text(pkg.name, style = MaterialTheme.typography.titleMedium)
                                     Text("${pkg.questionCount} 题",
                                         style = MaterialTheme.typography.bodySmall)
+                                }
+                                // ★ 上传按钮
+                                IconButton(onClick = {
+                                    uploadingPkg = pkg
+                                    uploadDescription = ""
+                                }) {
+                                    Icon(Icons.Default.CloudUpload, "上传到服务器")
                                 }
                                 IconButton(onClick = { itemToMove = pkg.fullPath to false; moveTarget = currentFolderPath }) {
                                     Icon(Icons.Default.DriveFileMove, "移动")
@@ -342,6 +375,87 @@ fun PackageListScreen(repository: QuestionRepository, navController: NavControll
                 }) { Text("确定") }
             },
             dismissButton = { TextButton(onClick = { itemToMove = null }) { Text("取消") } }
+        )
+    }
+
+    // ====== ★ 上传到服务器对话框 ======
+    uploadingPkg?.let { pkg ->
+        AlertDialog(
+            onDismissRequest = { if (!isUploading) uploadingPkg = null },
+            title = { Text("上传到服务器") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("题库: ${pkg.name}", style = MaterialTheme.typography.bodyMedium)
+                    Text("题目数: ${pkg.questionCount}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (uploaderName.isNotBlank()) {
+                        Text("上传者: $uploaderName",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = uploadDescription,
+                        onValueChange = { uploadDescription = it },
+                        label = { Text("描述（选填）") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isUploading,
+                        maxLines = 3
+                    )
+                    if (isUploading) {
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(4.dp))
+                        Text("正在压缩并上传...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isUploading,
+                    onClick = {
+                        val p = pkg
+                        isUploading = true
+                        scope.launch {
+                            try {
+                                // 1. 导出为 ZIP
+                                val file = repository.exportFolderToZip(p.fullPath)
+                                if (file == null) {
+                                    snackbarMessage = "压缩失败，无法上传"
+                                    return@launch
+                                }
+                                // 2. 上传
+                                serverRepository.uploadPackage(
+                                    zipFile = file,
+                                    name = p.name,
+                                    description = uploadDescription.trim(),
+                                    uploader = uploaderName
+                                )
+                                    .onSuccess { snackbarMessage = it }
+                                    .onFailure {
+                                        snackbarMessage = "上传失败: ${it.message}"
+                                    }
+                                // 3. 清理临时文件
+                                file.delete()
+                            } catch (e: Exception) {
+                                snackbarMessage = "上传异常: ${e.message}"
+                            } finally {
+                                isUploading = false
+                                uploadingPkg = null
+                            }
+                        }
+                    }
+                ) { Text("上传") }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !isUploading,
+                    onClick = { uploadingPkg = null }
+                ) { Text("取消") }
+            }
         )
     }
 }

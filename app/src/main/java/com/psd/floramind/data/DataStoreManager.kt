@@ -15,12 +15,12 @@ class DataStoreManager(context: Context) {
     companion object {
         val USER_NAME = stringPreferencesKey("user_name")
         val API_KEY = stringPreferencesKey("api_key")
+        val SERVER_URL = stringPreferencesKey("server_url")
     }
 
     val userNameFlow: Flow<String> = dataStore.data
         .map { preferences -> preferences[USER_NAME] ?: "用户" }
 
-    // DataStore 没有值或为空时，回退到打包时写入的 BuildConfig.API_KEY
     val apiKeyFlow: Flow<String> = dataStore.data
         .map { preferences ->
             preferences[API_KEY]
@@ -28,11 +28,21 @@ class DataStoreManager(context: Context) {
                 ?: BuildConfig.API_KEY
         }
 
+    /** 服务器地址，空字符串表示未配置 */
+    val serverUrlFlow: Flow<String> = dataStore.data
+        .map { preferences -> preferences[SERVER_URL] ?: "" }
+
     suspend fun saveUserName(name: String) {
         dataStore.edit { preferences -> preferences[USER_NAME] = name }
     }
 
     suspend fun saveApiKey(key: String) {
         dataStore.edit { preferences -> preferences[API_KEY] = key }
+    }
+
+    suspend fun saveServerUrl(url: String) {
+        dataStore.edit { preferences ->
+            preferences[SERVER_URL] = url.trim()
+        }
     }
 }

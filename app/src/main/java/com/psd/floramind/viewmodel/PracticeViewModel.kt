@@ -239,7 +239,7 @@ class PracticeViewModel(
                     wrongs.add("第 ${i + 1} 空：你填「$u」，应为「$c」")
                 }
             }
-            val score = if (blankCount > 0) correctCount * 100 / blankCount else 0
+            val score = correctCount * 100 / blankCount
             result = GradingResult(
                 score = score,
                 feedback = if (score == 100) "全部正确"
