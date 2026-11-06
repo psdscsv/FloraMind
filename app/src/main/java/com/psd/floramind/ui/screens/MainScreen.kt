@@ -24,7 +24,7 @@ import com.psd.floramind.model.network.Announcement
 import com.psd.floramind.repository.ServerRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-
+import androidx.compose.runtime.saveable.rememberSaveable
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen(
@@ -32,7 +32,7 @@ fun MainScreen(
     repository: QuestionRepository,
     serverRepository: com.psd.floramind.repository.ServerRepository
 ) {
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by rememberSaveable { mutableStateOf(0) }
     // ★ 公告状态
     val context = LocalContext.current
     val dataStore = remember { DataStoreManager(context) }

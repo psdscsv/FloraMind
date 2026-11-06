@@ -134,13 +134,17 @@ fun PackageListScreen(
                     IconButton(onClick = { newFolderName = ""; showCreateFolder = true }) {
                         Icon(Icons.Default.CreateNewFolder, "新建文件夹")
                     }
+                    // ★ 导入：文件进入 App → FileDownload
                     IconButton(onClick = { showImport = true }) {
-                        Icon(Icons.Default.FileUpload, "导入")
+                        Icon(Icons.Default.FileDownload, "导入")
                     }
+                    /*
                     IconButton(onClick = {
                         exportLauncher.launch("题库_${System.currentTimeMillis()}.zip")
-                    }) { Icon(Icons.Default.FileDownload, "导出") }
+                    }) { Icon(Icons.Default.FileUpload, "导出") }
+                    */
                 }
+
             )
         }
     ) { padding ->
