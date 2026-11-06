@@ -26,7 +26,7 @@ class DataStoreManager(context: Context) {
         val LAST_READ_ANN_ID = stringPreferencesKey("last_read_ann_id")
         val LAST_READ_ANN_UPDATED = longPreferencesKey("last_read_ann_updated")
 
-        const val DEFAULT_SERVER_URL = "http://8.138.243.178"
+        const val DEFAULT_SERVER_URL = "https://floramind.top"
     }
 
     // ============================================================

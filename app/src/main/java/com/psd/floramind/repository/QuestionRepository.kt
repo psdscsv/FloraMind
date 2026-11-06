@@ -183,8 +183,24 @@ class QuestionRepository(private val context: Context) {
             }
         }
 
+        // ★ 合并磁盘目录：数据库中还没有包的"空文件夹"也必须显示
+        val diskDir = if (folderPath.isEmpty()) packagesRootDir
+        else File(packagesRootDir, folderPath)
+        val directPkgNames = directPackages.map { it.substringAfterLast('/') }.toHashSet()
+        if (diskDir.exists() && diskDir.isDirectory) {
+            diskDir.listFiles()?.forEach { f ->
+                if (!f.isDirectory) return@forEach          // 跳过文件
+                if (f.name in directPkgNames) return@forEach // 已是题库包，由 packages 展示
+                if (f.name !in subFolders) subFolders[f.name] = 0
+            }
+        }
+
         val folders = subFolders.map { (name, count) ->
-            FolderItem(name = name, path = if (folderPath.isEmpty()) name else "$folderPath/$name", packageCount = count)
+            FolderItem(
+                name = name,
+                path = if (folderPath.isEmpty()) name else "$folderPath/$name",
+                packageCount = count
+            )
         }.sortedBy { it.name }
 
         val packages = directPackages.map { pkg ->
@@ -226,7 +242,7 @@ class QuestionRepository(private val context: Context) {
 
                 // 冲突检测：目标前缀下已有包？
                 val existing = questionDao.getPackageNamesStartingWith("${escapeLike(newPath)}/%")
-                if (existing.isNotEmpty()) {
+                if (existing.isNotEmpty() || File(packagesRootDir, newPath).exists()) {
                     return@withContext Result.failure(Exception("目标文件夹已存在"))
                 }
 
@@ -301,6 +317,9 @@ class QuestionRepository(private val context: Context) {
                 val newPath = if (targetFolder.isEmpty()) name else "$targetFolder/$name"
                 if (newPath == itemPath) return@withContext Result.success(Unit)
 
+                if (File(packagesRootDir, newPath).exists()) {
+                    return@withContext Result.failure(Exception("目标位置已存在同名项：$newPath"))
+                }
                 db.withTransaction {
                     val packages = questionDao.getPackageNamesStartingWith("${escapeLike(itemPath)}/%")
                     val isFolder = packages.isNotEmpty()
