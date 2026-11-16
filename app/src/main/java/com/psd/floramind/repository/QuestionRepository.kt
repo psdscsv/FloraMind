@@ -7,8 +7,8 @@ import androidx.room.withTransaction
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.psd.floramind.database.AppDatabase
+import com.psd.floramind.model.PracticeRecord
 import com.psd.floramind.model.Question
-import com.psd.floramind.model.StudyRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -41,12 +41,25 @@ data class ImportResult(
     val error: String? = null
 )
 
+/** 错题本首页：一个题库包 + 该包的错题数量 */
+data class MistakePackage(
+    val packageName: String,
+    val count: Int
+)
+
+/** 错题本详情：一道错题及其做题记录 */
+data class MistakeEntry(
+    val question: Question,
+    val record: PracticeRecord
+)
+
 class QuestionRepository(private val context: Context) {
     private val db = AppDatabase.getInstance(context)
     private val questionDao = db.questionDao()
     private val recordDao = db.studyRecordDao()
 
     private val packagesRootDir by lazy { File(context.filesDir, "packages") }
+    private val practiceStore by lazy { PracticeStore(packagesRootDir) }
 
     // ---------- LIKE 转义 ----------
     private fun escapeLike(s: String): String =
@@ -57,11 +70,18 @@ class QuestionRepository(private val context: Context) {
         context.getSharedPreferences("builtin_pkg_prefs", Context.MODE_PRIVATE)
     }
 
+    private val practicePrefs by lazy {
+        context.getSharedPreferences("practice_store_prefs", Context.MODE_PRIVATE)
+    }
+
     /**
      * 只在首次安装 / App 版本升级时加载内置题库。
      * 之后所有操作都基于 filesDir/packages/，与外部导入无差别。
      */
     suspend fun loadBuiltInQuestionsIfEmpty() = withContext(Dispatchers.IO) {
+        // 旧版把做题记录存在 Room 里，这里一次性搬进各题库包的 practice.json
+        migrateLegacyStudyRecordsIfNeeded()
+
         val currentVersion = context.packageManager
             .getPackageInfo(context.packageName, 0).versionCode
         val lastVersion = builtinPrefs.getInt("builtin_version", -1)
@@ -110,9 +130,16 @@ class QuestionRepository(private val context: Context) {
             }
 
             val destDir = File(packagesRootDir, pkgPath)
+            // 升级内置题库时保留做题记录（practice.json），避免版本更新把错题本清空
+            val keptPractice = File(destDir, PracticeStore.FILE_NAME)
+                .takeIf { destDir.exists() && it.isFile }
+                ?.readText()
             if (destDir.exists()) destDir.deleteRecursively()
             destDir.mkdirs()
             copyAssetTree(assetPath, destDir)
+            if (keptPractice != null) {
+                File(destDir, PracticeStore.FILE_NAME).writeText(keptPractice)
+            }
 
             val jsonFile = File(destDir, "questions.json")
             val questions: List<Question> = try {
@@ -252,11 +279,9 @@ class QuestionRepository(private val context: Context) {
                     val packages = questionDao.getPackageNamesStartingWith("${escapeLike(folderPath)}/%")
                     packages.forEach { oldPkg ->
                         val newPkg = newPrefix + oldPkg.removePrefix(oldPrefix)
-                        // 防止目标路径残留旧数据
+                        // 防止目标路径残留旧数据（做题记录随目录一起移动，不用改）
                         questionDao.deleteByPackage(newPkg)
-                        recordDao.deleteByPackage(newPkg)
                         questionDao.renameExactPackage(oldPkg, newPkg)
-                        recordDao.renameExactPackage(oldPkg, newPkg)
                     }
                 }
 
@@ -278,9 +303,7 @@ class QuestionRepository(private val context: Context) {
 
                 db.withTransaction {
                     questionDao.deleteByPackage(newPath)
-                    recordDao.deleteByPackage(newPath)
                     questionDao.renameExactPackage(packagePath, newPath)
-                    recordDao.renameExactPackage(packagePath, newPath)
                 }
                 moveDirOnDisk(packagePath, newPath)
                 Result.success(Unit)
@@ -296,16 +319,14 @@ class QuestionRepository(private val context: Context) {
             val packages = questionDao.getPackageNamesStartingWith("${escapeLike(folderPath)}/%")
             packages.forEach { pkg ->
                 questionDao.deleteByPackage(pkg)
-                recordDao.deleteByPackage(pkg)
             }
         }
         File(packagesRootDir, folderPath).deleteRecursively()
     }
 
-    /** 删除包（保持原有语义） */
+    /** 删除包（保持原有语义，practice.json 随目录一起删除） */
     suspend fun deletePackage(packageName: String) {
         questionDao.deleteByPackage(packageName)
-        recordDao.deleteByPackage(packageName)
         File(packagesRootDir, packageName).deleteRecursively()
     }
 
@@ -329,15 +350,11 @@ class QuestionRepository(private val context: Context) {
                         packages.forEach { oldPkg ->
                             val newPkg = newPrefix + oldPkg.removePrefix(oldPrefix)
                             questionDao.deleteByPackage(newPkg)
-                            recordDao.deleteByPackage(newPkg)
                             questionDao.renameExactPackage(oldPkg, newPkg)
-                            recordDao.renameExactPackage(oldPkg, newPkg)
                         }
                     } else {
                         questionDao.deleteByPackage(newPath)
-                        recordDao.deleteByPackage(newPath)
                         questionDao.renameExactPackage(itemPath, newPath)
-                        recordDao.renameExactPackage(itemPath, newPath)
                     }
                 }
                 moveDirOnDisk(itemPath, newPath)
@@ -480,16 +497,86 @@ class QuestionRepository(private val context: Context) {
     fun getImageFile(packageName: String, imageRelativePath: String): File? =
         File(File(packagesRootDir, packageName), imageRelativePath).takeIf { it.exists() }
 
-    // ================== 学习记录 ==================
-    suspend fun saveRecord(record: StudyRecord) = recordDao.insert(record)
-    suspend fun getMistakes(): List<StudyRecord> = recordDao.getMistakes()
-    suspend fun getMistakesByPackage(pkg: String) = recordDao.getMistakesByPackage(pkg)
-    suspend fun getMistakeCount(pkg: String) = recordDao.getMistakeCountByPackage(pkg)
-    suspend fun deleteMistake(id: Long) = recordDao.deleteById(id)
+    // ================== 做题记录（存放在题库包内） ==================
 
-    suspend fun getMistakePackages(): List<String> {
+    /** 某个题库包的全部做题记录 */
+    suspend fun getPracticeRecords(packageName: String): Map<Int, PracticeRecord> =
+        withContext(Dispatchers.IO) { practiceStore.read(packageName) }
+
+    /** 所有题库包的做题记录：包名 -> (题号 -> 记录) */
+    suspend fun getAllPracticeRecords(): Map<String, Map<Int, PracticeRecord>> =
+        withContext(Dispatchers.IO) { practiceStore.readAll() }
+
+    /** 记录一次作答，返回更新后的记录 */
+    suspend fun recordPractice(
+        packageName: String,
+        questionId: Int,
+        correct: Boolean,
+        score: Int,
+        userAnswer: String
+    ): PracticeRecord = withContext(Dispatchers.IO) {
+        practiceStore.record(packageName, questionId, correct, score, userAnswer)
+    }
+
+    /** 重置某题的做题记录（也用于把题移出错题本） */
+    suspend fun resetPractice(packageName: String, questionId: Int) =
+        withContext(Dispatchers.IO) {
+            practiceStore.reset(packageName, questionId)
+        }
+
+    /** 错题本首页数据 */
+    suspend fun getMistakePackages(): List<MistakePackage> = withContext(Dispatchers.IO) {
         val valid = questionDao.getAllPackageNames().toSet()
-        return recordDao.getDistinctMistakePackages().filter { it in valid }
+        practiceStore.readAll()
+            .mapNotNull { (pkg, records) ->
+                if (pkg !in valid) return@mapNotNull null
+                val count = records.values.count { it.isMistake }
+                if (count == 0) null else MistakePackage(pkg, count)
+            }
+            .sortedWith(compareByDescending<MistakePackage> { it.count }.thenBy { it.packageName })
+    }
+
+    /** 某个题库包下的错题列表（按最近作答时间倒序） */
+    suspend fun getMistakeEntries(packageName: String): List<MistakeEntry> =
+        withContext(Dispatchers.IO) {
+            val records = practiceStore.read(packageName).filterValues { it.isMistake }
+            if (records.isEmpty()) return@withContext emptyList()
+            val questions = questionDao.getQuestionsByPackage(packageName).associateBy { it.id }
+            records.mapNotNull { (questionId, record) ->
+                val question = questions[questionId] ?: return@mapNotNull null
+                MistakeEntry(question, record)
+            }.sortedByDescending { it.record.lastTime }
+        }
+
+    /**
+     * 旧版本把做题记录存在 Room 的 study_records 表里。
+     * 这里把它一次性搬进各题库包的 practice.json，搬完清空旧表。
+     */
+    private suspend fun migrateLegacyStudyRecordsIfNeeded() {
+        if (practicePrefs.getBoolean("legacy_records_migrated", false)) return
+        try {
+            val legacy = recordDao.getAll()
+            if (legacy.isNotEmpty()) {
+                val grouped = legacy.groupBy { it.packageName }
+                    .mapValues { (_, list) ->
+                        list.map {
+                            LegacyAttempt(
+                                questionId = it.questionId,
+                                correct = it.isCorrect,
+                                score = it.score,
+                                userAnswer = it.userAnswer,
+                                timestamp = it.timestamp
+                            )
+                        }
+                    }
+                practiceStore.mergeLegacy(grouped)
+                recordDao.deleteAll()
+                Log.d("Repo", "已迁移 ${legacy.size} 条旧做题记录到 practice.json")
+            }
+            practicePrefs.edit().putBoolean("legacy_records_migrated", true).apply()
+        } catch (e: Exception) {
+            Log.e("Repo", "迁移旧做题记录失败", e)
+        }
     }
 
     // 兼容旧调用

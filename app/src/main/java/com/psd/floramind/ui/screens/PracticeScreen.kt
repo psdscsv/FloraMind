@@ -1,31 +1,59 @@
 package com.psd.floramind.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.psd.floramind.data.DataStoreManager
+import com.psd.floramind.model.LabelPoint
+import com.psd.floramind.model.PracticeRecord
 import com.psd.floramind.model.Question
 import com.psd.floramind.model.QuestionType
 import com.psd.floramind.model.network.GradingResult
+import com.psd.floramind.model.practiceKey
 import com.psd.floramind.repository.QuestionRepository
 import com.psd.floramind.viewmodel.PracticeViewModel
+
+// 与参考页面一致的判对/判错配色
+private val CorrectContainer = Color(0xFFE8F6EE)
+private val CorrectBorderColor = Color(0xFF4F9F74)
+private val CorrectContent = Color(0xFF1C6344)
+private val WrongContainer = Color(0xFFFCECEB)
+private val WrongBorderColor = Color(0xFFD4807A)
+private val WrongContent = Color(0xFFA33B34)
+private val AnswerContainer = Color(0xFFF8FAF7)
+private val AnswerBorderColor = Color(0xFFC9D8CC)
+private val AnswerLabelColor = Color(0xFF6D8A78)
+
+private val AI_GRADABLE_TYPES = setOf(
+    QuestionType.DEFINITION,
+    QuestionType.SHORT_ANSWER,
+    QuestionType.ESSAY
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,13 +72,10 @@ fun PracticeScreen(
     // ★ 先创建 ViewModel（初始 apiKey 传空串，后续通过 setApiKey 更新）
     val viewModel = remember { PracticeViewModel(repository, "") }
 
-    // ★ 监听 apiKey 变化，仅非空时同步给 ViewModel
     LaunchedEffect(Unit) {
         dataStore.apiKeyFlow.collect { key ->
             apiKey = key
-            if (key.isNotBlank()) {
-                viewModel.setApiKey(key)
-            }
+            if (key.isNotBlank()) viewModel.setApiKey(key)
         }
     }
 
@@ -61,13 +86,9 @@ fun PracticeScreen(
             viewModel.setCurrentIndex(idx)
         } else {
             viewModel.loadQuestionsForPackage(packageName)
-            val qs = viewModel.questions.value
-            val index = qs.indexOfFirst { it.id == questionId }
-            if (index >= 0) {
-                viewModel.setCurrentIndex(index)
-            } else if (qs.isNotEmpty()) {
-                viewModel.setCurrentIndex(0)
-            }
+            val loaded = viewModel.questions.value
+            val index = loaded.indexOfFirst { it.id == questionId }
+            viewModel.setCurrentIndex(if (index >= 0) index else 0)
         }
     }
 
@@ -76,18 +97,35 @@ fun PracticeScreen(
     val currentIndex by viewModel.currentIndex.collectAsState()
     val gradingResult by viewModel.gradingResult.collectAsState()
     val userAnswers by viewModel.userAnswers.collectAsState()
-
-    // ★ 修改 4：提交中的 UI 状态由 ViewModel 控制
+    val fillBlankAnswers by viewModel.fillBlankAnswers.collectAsState()
+    val records by viewModel.records.collectAsState()
+    val revealed by viewModel.revealed.collectAsState()
+    val selectedOption by viewModel.selectedOption.collectAsState()
+    val attemptRecorded by viewModel.attemptRecorded.collectAsState()
     val isSubmitting by viewModel.isSubmitting.collectAsState()
 
     var diagramAnswers by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var showCoordinateDialog by remember { mutableStateOf(false) }
     var clickedPoint by remember { mutableStateOf<Offset?>(null) }
 
+    // 换题时清空填图作答
+    LaunchedEffect(currentIndex) { diagramAnswers = emptyMap() }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("练习") },
+                title = {
+                    Column {
+                        Text("练习")
+                        if (questions.isNotEmpty() && currentIndex in questions.indices) {
+                            Text(
+                                "第 ${currentIndex + 1} / ${questions.size} 题",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
@@ -123,17 +161,25 @@ fun PracticeScreen(
                             Text("当前题目不存在")
                         }
                     } else {
-                        val q = question
+                        val questionKey = question.practiceKey
+                        val record = records[questionKey]
+                        val currentAnswer = userAnswers[questionKey] ?: ""
+                        val aiGradable = question.type in AI_GRADABLE_TYPES
+
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            if (q.type != QuestionType.FILL_BLANK) {
+                            item {
+                                QuestionHeader(question, record, currentIndex, questions.size)
+                            }
+
+                            if (question.type != QuestionType.FILL_BLANK) {
                                 item {
                                     Text(
-                                        text = q.stem,
+                                        text = question.stem,
                                         style = MaterialTheme.typography.titleLarge,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
@@ -141,95 +187,154 @@ fun PracticeScreen(
                             }
 
                             item {
-                                when (q.type) {
-                                    QuestionType.CHOICE -> ChoiceInput(q, viewModel)
-                                    QuestionType.FILL_BLANK -> FillBlankInput(q, viewModel)
-                                    QuestionType.DEFINITION,
-                                    QuestionType.SHORT_ANSWER,
-                                    QuestionType.ESSAY ->
-                                        EssayInput(q, viewModel, userAnswers)
+                                when (question.type) {
+                                    QuestionType.CHOICE -> ChoiceOptions(
+                                        question = question,
+                                        selectedOption = selectedOption,
+                                        revealed = revealed,
+                                        onSelect = { viewModel.selectOption(it) }
+                                    )
+
+                                    QuestionType.FILL_BLANK -> FillBlankInput(
+                                        question = question,
+                                        answers = fillBlankAnswers[questionKey] ?: emptyList(),
+                                        onAnswerChange = { index, text ->
+                                            viewModel.updateFillBlankAnswer(questionKey, index, text)
+                                        }
+                                    )
 
                                     QuestionType.DIAGRAM -> DiagramInput(
-                                        q = q,
-                                        packageName = packageName,
+                                        q = question,
                                         repository = repository,
                                         diagramAnswers = diagramAnswers,
-                                        onDiagramAnswerChange = { newMap -> diagramAnswers = newMap },
+                                        onDiagramAnswerChange = { diagramAnswers = it },
                                         onShowDialog = { point ->
                                             clickedPoint = point
                                             showCoordinateDialog = true
+                                        }
+                                    )
+
+                                    else -> EssayInput(
+                                        text = currentAnswer,
+                                        onTextChange = { viewModel.updateUserAnswer(it) }
+                                    )
+                                }
+                            }
+
+                            if (revealed) {
+                                item { AnswerBlock(question) }
+                            }
+
+                            if (gradingResult != null) {
+                                item { ResultCard(gradingResult!!) }
+                            }
+
+                            if (!revealed && !attemptRecorded) {
+                                item {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(
+                                            onClick = { viewModel.revealAnswer() },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Icon(Icons.Default.Visibility, contentDescription = null)
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("显示答案")
+                                        }
+                                        if (aiGradable && !isSubmitting) {
+                                            Button(
+                                                onClick = { viewModel.submitCurrentAnswer() },
+                                                enabled = apiKey.isNotBlank() && currentAnswer.isNotBlank(),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("AI 评分")
+                                            }
+                                            if (apiKey.isBlank()) {
+                                                Text(
+                                                    "未配置 API Key：可直接显示答案后自我判定",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                        if (isSubmitting) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(16.dp),
+                                                    strokeWidth = 2.dp
+                                                )
+                                                Spacer(Modifier.width(8.dp))
+                                                Text("AI 评分中...", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                        }
+                                        if (question.type == QuestionType.DIAGRAM) {
+                                            Button(
+                                                onClick = { viewModel.submitDiagramAnswers(diagramAnswers) },
+                                                enabled = !isSubmitting,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("提交判定")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (revealed && !attemptRecorded) {
+                                item {
+                                    SelfJudgeRow(
+                                        onCorrect = {
+                                            viewModel.selfJudge(
+                                                correct = true,
+                                                answerOverride = if (question.type == QuestionType.DIAGRAM)
+                                                    diagramAnswers.values.joinToString("; ") else null
+                                            )
                                         },
-                                        viewModel = viewModel
+                                        onWrong = {
+                                            viewModel.selfJudge(
+                                                correct = false,
+                                                answerOverride = if (question.type == QuestionType.DIAGRAM)
+                                                    diagramAnswers.values.joinToString("; ") else null
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+
+                            if (attemptRecorded) {
+                                item {
+                                    Text(
+                                        "已记录本题结果。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = CorrectContent
                                     )
                                 }
                             }
 
                             item {
-                                val needApiKey = q.type == QuestionType.DEFINITION ||
-                                        q.type == QuestionType.SHORT_ANSWER ||
-                                        q.type == QuestionType.ESSAY
-                                val apiKeyMissing = needApiKey && apiKey.isBlank()
-
-                                Button(
-                                    onClick = {
-                                        if (q.type == QuestionType.DIAGRAM) {
-                                            viewModel.submitDiagramAnswers(diagramAnswers)
-                                        } else {
-                                            viewModel.submitCurrentAnswer()
-                                        }
-                                    },
-                                    enabled = !isSubmitting && !apiKeyMissing,
-                                    modifier = Modifier.fillMaxWidth()
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    if (isSubmitting) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(18.dp),
-                                            strokeWidth = 2.dp,
-                                            color = LocalContentColor.current
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("评分中...")
-                                    } else {
-                                        Text(
-                                            when {
-                                                apiKeyMissing -> "请先在设置中配置 API Key"
-                                                else -> "提交答案"
-                                            }
-                                        )
-                                    }
+                                    OutlinedButton(
+                                        onClick = { viewModel.movePrevious() },
+                                        enabled = currentIndex > 0 && !isSubmitting,
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("← 上一题") }
+                                    Button(
+                                        onClick = { viewModel.moveNext() },
+                                        enabled = currentIndex < questions.size - 1 && !isSubmitting,
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("下一题 →") }
                                 }
-                            }
-
-                            gradingResult?.let { result ->
-                                item { ResultCard(result) }
                             }
 
                             item {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceEvenly
-                                ) {
-                                    Button(
-                                        onClick = {
-                                            val prev = currentIndex - 1
-                                            if (prev >= 0) {
-                                                diagramAnswers = emptyMap()
-                                                viewModel.setCurrentIndex(prev)
-                                            }
-                                        },
-                                        enabled = currentIndex > 0 && !isSubmitting
-                                    ) { Text("上一题") }
-                                    Button(
-                                        onClick = {
-                                            val next = currentIndex + 1
-                                            if (next < questions.size) {
-                                                diagramAnswers = emptyMap()
-                                                viewModel.setCurrentIndex(next)
-                                            }
-                                        },
-                                        enabled = currentIndex < questions.size - 1 && !isSubmitting
-                                    ) { Text("下一题") }
-                                }
+                                TextButton(
+                                    onClick = {
+                                        diagramAnswers = emptyMap()
+                                        viewModel.resetCurrent()
+                                    }
+                                ) { Text("重置本题记录") }
                             }
                         }
                     }
@@ -252,42 +357,176 @@ fun PracticeScreen(
     }
 }
 
-// ===== 以下子组件保持不变 =====
+// ===================== 题目头部 =====================
 
 @Composable
-private fun ChoiceInput(q: Question, viewModel: PracticeViewModel) {
-    val options = q.options ?: emptyList()
-    var selected by remember(q.id) { mutableStateOf<String?>(null) }
-    Column {
-        options.forEach { option ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(
-                    selected = selected == option,
-                    onClick = {
-                        selected = option
-                        viewModel.updateUserAnswer(option)
-                    }
-                )
-                Text(option, modifier = Modifier.padding(start = 8.dp))
-            }
+private fun QuestionHeader(
+    question: Question,
+    record: PracticeRecord?,
+    index: Int,
+    total: Int
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TagChip(question.type.label())
+            TagChip(question.packageName.substringAfterLast('/'))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                "第 ${index + 1} / $total 题",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "本题 对 ${record?.right ?: 0} 错 ${record?.wrong ?: 0}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        record?.lastAnswer?.takeIf { it.isNotBlank() }?.let { last ->
+            Text(
+                "上次作答：$last",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
 
 @Composable
-private fun FillBlankInput(q: Question, viewModel: PracticeViewModel) {
+private fun TagChip(text: String) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+// ===================== 选择题 =====================
+
+@Composable
+private fun ChoiceOptions(
+    question: Question,
+    selectedOption: String?,
+    revealed: Boolean,
+    onSelect: (String) -> Unit
+) {
+    val options = question.options.orEmpty()
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        options.forEachIndexed { index, option ->
+            val isAnswer = question.correctAnswer?.trim()
+                ?.equals(option.trim(), ignoreCase = true) == true
+            val isPicked = selectedOption?.trim() == option.trim()
+            ChoiceOptionRow(
+                letter = ('A' + index).toString(),
+                text = option,
+                revealed = revealed,
+                isAnswer = isAnswer,
+                isPicked = isPicked,
+                onClick = { onSelect(option) }
+            )
+        }
+        if (!revealed) {
+            Text(
+                "点击选项即可判定对错",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChoiceOptionRow(
+    letter: String,
+    text: String,
+    revealed: Boolean,
+    isAnswer: Boolean,
+    isPicked: Boolean,
+    onClick: () -> Unit
+) {
+    val container = when {
+        revealed && isAnswer -> CorrectContainer
+        revealed && isPicked -> WrongContainer
+        else -> MaterialTheme.colorScheme.surface
+    }
+    val border = when {
+        revealed && isAnswer -> CorrectBorderColor
+        revealed && isPicked -> WrongBorderColor
+        else -> MaterialTheme.colorScheme.outlineVariant
+    }
+    val contentColor = when {
+        revealed && isAnswer -> CorrectContent
+        revealed && isPicked -> WrongContent
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val dimmed = revealed && !isAnswer && !isPicked
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = container,
+        border = BorderStroke(1.dp, border),
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (dimmed) 0.55f else 1f)
+            .clickable(enabled = !revealed, onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "$letter. ",
+                style = MaterialTheme.typography.bodyLarge,
+                color = contentColor
+            )
+            Text(
+                text = text,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge,
+                color = contentColor,
+                textDecoration = if (revealed && isPicked && !isAnswer) {
+                    TextDecoration.LineThrough
+                } else {
+                    null
+                }
+            )
+            if (revealed && isAnswer) {
+                Icon(Icons.Default.Check, contentDescription = null, tint = CorrectBorderColor)
+            } else if (revealed && isPicked) {
+                Icon(Icons.Default.Close, contentDescription = null, tint = WrongBorderColor)
+            }
+        }
+    }
+}
+
+// ===================== 填空 / 主观题 =====================
+
+@Composable
+private fun FillBlankInput(
+    question: Question,
+    answers: List<String>,
+    onAnswerChange: (Int, String) -> Unit
+) {
     val blankRegex = remember { Regex("_{2,}") }
-    val parts = remember(q.id, q.stem) { q.stem.split(blankRegex) }
+    val parts = remember(question.practiceKey, question.stem) { question.stem.split(blankRegex) }
     val blankCount = parts.size - 1
 
-    val allAnswers by viewModel.fillBlankAnswers.collectAsState()
-    val answers = allAnswers[q.id] ?: emptyList()
-
     if (blankCount <= 0) {
-        val legacy = answers.firstOrNull() ?: ""
         OutlinedTextField(
-            value = legacy,
-            onValueChange = { viewModel.updateFillBlankAnswer(q.id, 0, it) },
+            value = answers.firstOrNull() ?: "",
+            onValueChange = { onAnswerChange(0, it) },
             label = { Text("填入答案") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
@@ -298,18 +537,12 @@ private fun FillBlankInput(q: Question, viewModel: PracticeViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         parts.forEachIndexed { index, part ->
             if (part.isNotBlank()) {
-                Text(
-                    text = part,
-                    style = MaterialTheme.typography.bodyLarge
-                )
+                Text(text = part, style = MaterialTheme.typography.bodyLarge)
             }
             if (index < blankCount) {
-                val value = answers.getOrNull(index) ?: ""
                 OutlinedTextField(
-                    value = value,
-                    onValueChange = { newVal ->
-                        viewModel.updateFillBlankAnswer(q.id, index, newVal)
-                    },
+                    value = answers.getOrNull(index) ?: "",
+                    onValueChange = { newValue -> onAnswerChange(index, newValue) },
                     label = { Text("第 ${index + 1} 空") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -320,18 +553,10 @@ private fun FillBlankInput(q: Question, viewModel: PracticeViewModel) {
 }
 
 @Composable
-private fun EssayInput(
-    q: Question,
-    viewModel: PracticeViewModel,
-    userAnswers: Map<Int, String>
-) {
-    var text by remember(q.id) { mutableStateOf(userAnswers[q.id] ?: "") }
+private fun EssayInput(text: String, onTextChange: (String) -> Unit) {
     OutlinedTextField(
         value = text,
-        onValueChange = {
-            text = it
-            viewModel.updateUserAnswer(it)
-        },
+        onValueChange = onTextChange,
         label = { Text("你的回答") },
         modifier = Modifier.fillMaxWidth(),
         minLines = 4,
@@ -339,15 +564,98 @@ private fun EssayInput(
     )
 }
 
+// ===================== 答案 / 自我判定 =====================
+
+@Composable
+private fun AnswerBlock(question: Question) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = AnswerContainer,
+        border = BorderStroke(1.dp, AnswerBorderColor),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                "答案",
+                style = MaterialTheme.typography.labelSmall,
+                color = AnswerLabelColor
+            )
+            Spacer(Modifier.height(4.dp))
+            if (question.type == QuestionType.DIAGRAM) {
+                val labels = question.labels.orEmpty()
+                Text(
+                    if (labels.isEmpty()) "（本题暂无标注答案）"
+                    else "需标注部位：" + labels.joinToString(" · ") { it.correctAnswer },
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            } else {
+                Text(
+                    question.correctAnswer?.takeIf { it.isNotBlank() }
+                        ?: "（本题暂无参考答案）",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+            val keywords = question.keywords.orEmpty().filter { it.isNotBlank() }
+            if (keywords.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "关键词：" + keywords.joinToString("、"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelfJudgeRow(onCorrect: () -> Unit, onWrong: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "对照答案自我判定：",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = onCorrect,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = CorrectContainer,
+                    contentColor = CorrectContent
+                ),
+                border = BorderStroke(1.dp, CorrectBorderColor)
+            ) {
+                Icon(Icons.Default.Check, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("答对了")
+            }
+            OutlinedButton(
+                onClick = onWrong,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = WrongContainer,
+                    contentColor = WrongContent
+                ),
+                border = BorderStroke(1.dp, WrongBorderColor)
+            ) {
+                Icon(Icons.Default.Close, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("答错了")
+            }
+        }
+    }
+}
+
+// ===================== 填图 =====================
+
 @Composable
 private fun DiagramInput(
     q: Question,
-    packageName: String,
     repository: QuestionRepository,
     diagramAnswers: Map<String, String>,
     onDiagramAnswerChange: (Map<String, String>) -> Unit,
-    onShowDialog: (Offset) -> Unit,
-    viewModel: PracticeViewModel
+    onShowDialog: (Offset) -> Unit
 ) {
     val context = LocalContext.current
     Column {
@@ -363,15 +671,16 @@ private fun DiagramInput(
                     .fillMaxWidth()
                     .height(300.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .pointerInput(q.id) {
+                    .pointerInput(q.practiceKey) {
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent()
                                 val position = event.changes.first().position
-                                val size = size
-                                val x = position.x / size.width.toFloat()
-                                val y = position.y / size.height.toFloat()
-                                onShowDialog(Offset(x, y))
+                                val width = size.width.toFloat().takeIf { it > 0f } ?: 1f
+                                val height = size.height.toFloat().takeIf { it > 0f } ?: 1f
+                                onShowDialog(
+                                    Offset(position.x / width, position.y / height)
+                                )
                             }
                         }
                     }
@@ -389,14 +698,14 @@ private fun DiagramInput(
             }
         }
 
-        val labels = q.labels ?: emptyList()
+        val labels = q.labels.orEmpty()
         labels.forEachIndexed { index, _ ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${index + 1}: ")
                 OutlinedTextField(
                     value = diagramAnswers[index.toString()] ?: "",
-                    onValueChange = { newVal ->
-                        onDiagramAnswerChange(diagramAnswers + (index.toString() to newVal))
+                    onValueChange = { newValue ->
+                        onDiagramAnswerChange(diagramAnswers + (index.toString() to newValue))
                     },
                     label = { Text("结构名称") },
                     modifier = Modifier.weight(1f)
@@ -409,7 +718,7 @@ private fun DiagramInput(
 @Composable
 private fun DiagramLabelDialog(
     clickedPoint: Offset,
-    labels: List<com.psd.floramind.model.LabelPoint>,
+    labels: List<LabelPoint>,
     onDismiss: () -> Unit,
     onSave: (Int, String) -> Unit
 ) {
@@ -425,7 +734,10 @@ private fun DiagramLabelDialog(
         title = { Text("标注结构") },
         text = {
             Column {
-                Text("点击位置: (${String.format("%.2f", clickedPoint.x)}, ${String.format("%.2f", clickedPoint.y)})")
+                Text(
+                    "点击位置: (" + String.format("%.2f", clickedPoint.x) + ", " +
+                            String.format("%.2f", clickedPoint.y) + ")"
+                )
                 Text("最近标签序号: ${nearestIndex?.let { it + 1 } ?: "无"}")
                 OutlinedTextField(
                     value = inputText,
@@ -450,6 +762,8 @@ private fun DiagramLabelDialog(
         }
     )
 }
+
+// ===================== 评分结果 =====================
 
 @Composable
 fun ResultCard(result: GradingResult) {

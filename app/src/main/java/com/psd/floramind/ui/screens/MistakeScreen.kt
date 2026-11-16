@@ -34,6 +34,11 @@ fun MistakeScreen(repository: QuestionRepository, navController: NavController) 
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("暂无错题", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "做错的题会记进对应题库包的 practice.json，导出时一起带走",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         return
@@ -45,18 +50,20 @@ fun MistakeScreen(repository: QuestionRepository, navController: NavController) 
     ) {
         item {
             Text("错题本", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "最近一次做错的题；做对一次即自动移出",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(modifier = Modifier.height(8.dp))
         }
-        items(packages, key = { it }) { pkg ->
-            val count by produceState(initialValue = 0, key1 = pkg) {
-                value = repository.getMistakeCount(pkg)
-            }
+        items(packages, key = { it.packageName }) { pkg ->
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
                         // ★ 包路径含 '/'，必须 encode
-                        navController.navigate("mistakes_detail/${Uri.encode(pkg)}")
+                        navController.navigate("mistakes_detail/${Uri.encode(pkg.packageName)}")
                     },
                 elevation = CardDefaults.cardElevation(2.dp)
             ) {
@@ -69,11 +76,11 @@ fun MistakeScreen(repository: QuestionRepository, navController: NavController) 
                     Column(modifier = Modifier.weight(1f)) {
                         // 显示末段名（完整路径太长）
                         Text(
-                            text = pkg.substringAfterLast('/'),
+                            text = pkg.packageName.substringAfterLast('/'),
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "$count 道错题",
+                            text = "${pkg.count} 道错题",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

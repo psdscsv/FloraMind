@@ -17,7 +17,7 @@ import com.psd.floramind.repository.QuestionRepository
 import com.psd.floramind.repository.ServerRepository
 import com.psd.floramind.viewmodel.SettingsViewModel
 import kotlinx.coroutines.launch
-
+import androidx.compose.ui.text.style.TextAlign
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -102,12 +102,6 @@ fun SettingsScreen(
                 "题库服务器地址" + if (serverUrl.isBlank()) "（未配置）" else "",
                 style = MaterialTheme.typography.titleMedium
             )
-            Text(
-                "示例: http://10.0.2.2:5000/ （模拟器访问本机）\n" +
-                        "或 http://192.168.1.10:5000/",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
             OutlinedTextField(
                 value = editingServerUrl,
                 onValueChange = { editingServerUrl = it },
@@ -158,8 +152,17 @@ fun SettingsScreen(
                 }
             }) { Text("恢复内置题库") }
 
-            // 底部留白，避免最后一项贴着屏幕边缘
-            Spacer(Modifier.height(24.dp))
+
+            // ---------- ICP 备案号 ----------
+            Text(
+                text = "粤ICP备2026174309号-2A",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(Modifier.height(16.dp))
         }
     }
 }

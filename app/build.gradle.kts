@@ -16,8 +16,8 @@ android {
         applicationId = "com.psd.floramind"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.2"
+        versionCode = 3
+        versionName = "0.1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

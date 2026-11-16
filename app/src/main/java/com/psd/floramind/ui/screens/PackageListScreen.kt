@@ -138,11 +138,10 @@ fun PackageListScreen(
                     IconButton(onClick = { showImport = true }) {
                         Icon(Icons.Default.FileDownload, "导入")
                     }
-                    /*
+                    // ★ 导出：ZIP 会带上各题库包里的 practice.json（做题记录）
                     IconButton(onClick = {
                         exportLauncher.launch("题库_${System.currentTimeMillis()}.zip")
                     }) { Icon(Icons.Default.FileUpload, "导出") }
-                    */
                 }
 
             )
