@@ -40,13 +40,14 @@ fun MistakeDetailScreen(
     var pendingDelete by remember { mutableStateOf<MistakeEntry?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val onBack = rememberBackAction(navController)
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(packageName.substringAfterLast('/')) },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 },

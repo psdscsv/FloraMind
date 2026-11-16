@@ -27,6 +27,7 @@ fun FeedbackScreen(
     var isSubmitting by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val onBack = rememberBackAction(navController)
 
     LaunchedEffect(Unit) {
         dataStore.userNameFlow.collect { userName = it }
@@ -37,7 +38,7 @@ fun FeedbackScreen(
             TopAppBar(
                 title = { Text("意见反馈") },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 }

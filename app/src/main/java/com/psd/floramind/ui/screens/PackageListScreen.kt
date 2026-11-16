@@ -68,6 +68,9 @@ fun PackageListScreen(
     var actionTarget by remember { mutableStateOf<MenuTarget?>(null) }
     var movingItem by remember { mutableStateOf<MenuTarget?>(null) }
 
+    // ★ 导出目标（长按菜单里点「导出」时先记住要导出的包/文件夹）
+    var exportTarget by remember { mutableStateOf<MenuTarget?>(null) }
+
     // ★ 上传对话框状态
     var uploadingPkg by remember { mutableStateOf<PackageItem?>(null) }
     var uploadDescription by remember { mutableStateOf("") }
@@ -98,17 +101,32 @@ fun PackageListScreen(
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
     ) { uri: Uri? ->
-        uri?.let {
-            scope.launch {
-                val file = repository.exportFolderToZip(currentFolderPath)
-                if (file != null) {
-                    context.contentResolver.openOutputStream(uri)?.use { out ->
-                        file.inputStream().use { it.copyTo(out) }
-                    }
-                    snackbarMessage = "导出成功"
-                } else snackbarMessage = "导出失败"
+        val target = exportTarget
+        exportTarget = null
+        if (uri == null || target == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val file = repository.exportFolderToZip(target.path)
+            if (file == null) {
+                snackbarMessage = "导出失败：${target.name} 不存在"
+                return@launch
+            }
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    file.inputStream().use { it.copyTo(out) }
+                }
+                snackbarMessage = "已导出 ${file.name}（含做题记录）"
+            } catch (e: Exception) {
+                snackbarMessage = "导出失败: ${e.message}"
+            } finally {
+                file.delete()
             }
         }
+    }
+
+    /** 长按菜单里的「导出」：导出该题库包（或整个文件夹） */
+    fun startExport(target: MenuTarget) {
+        exportTarget = target
+        exportLauncher.launch("${safeZipName(target.name)}.zip")
     }
 
     Scaffold(
@@ -138,10 +156,6 @@ fun PackageListScreen(
                     IconButton(onClick = { showImport = true }) {
                         Icon(Icons.Default.FileDownload, "导入")
                     }
-                    // ★ 导出：ZIP 会带上各题库包里的 practice.json（做题记录）
-                    IconButton(onClick = {
-                        exportLauncher.launch("题库_${System.currentTimeMillis()}.zip")
-                    }) { Icon(Icons.Default.FileUpload, "导出") }
                 }
 
             )
@@ -240,6 +254,16 @@ fun PackageListScreen(
                                     }
                                 )
                                 DropdownMenuItem(
+                                    text = { Text("导出整个文件夹") },
+                                    leadingIcon = { Icon(Icons.Default.FileUpload, null) },
+                                    onClick = {
+                                        actionTarget = null
+                                        startExport(
+                                            MenuTarget(folder.path, true, folder.name)
+                                        )
+                                    }
+                                )
+                                DropdownMenuItem(
                                     text = { Text("删除") },
                                     leadingIcon = {
                                         Icon(
@@ -319,6 +343,16 @@ fun PackageListScreen(
                                             pkg.fullPath, false, pkg.name
                                         )
                                         actionTarget = null
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("导出（含做题记录）") },
+                                    leadingIcon = { Icon(Icons.Default.FileUpload, null) },
+                                    onClick = {
+                                        actionTarget = null
+                                        startExport(
+                                            MenuTarget(pkg.fullPath, false, pkg.name)
+                                        )
                                     }
                                 )
                                 DropdownMenuItem(
@@ -692,4 +726,10 @@ private fun MoveTargetDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
+}
+
+/** 导出时给 ZIP 起个安全的名字（去掉文件名非法字符） */
+private fun safeZipName(name: String): String {
+    val cleaned = name.replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").trim('_')
+    return cleaned.ifBlank { "题库" }
 }

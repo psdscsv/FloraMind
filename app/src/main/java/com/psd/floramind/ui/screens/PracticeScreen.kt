@@ -107,6 +107,7 @@ fun PracticeScreen(
     var diagramAnswers by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var showCoordinateDialog by remember { mutableStateOf(false) }
     var clickedPoint by remember { mutableStateOf<Offset?>(null) }
+    val onBack = rememberBackAction(navController)
 
     // 换题时清空填图作答
     LaunchedEffect(currentIndex) { diagramAnswers = emptyMap() }
@@ -127,7 +128,7 @@ fun PracticeScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 }

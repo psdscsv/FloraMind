@@ -35,6 +35,7 @@ fun ServerPackageListScreen(
     var downloadingId by remember { mutableStateOf<String?>(null) }
     var snackbar by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val onBack = rememberBackAction(navController)
 
     suspend fun refresh() {
         isLoading = true
@@ -52,7 +53,7 @@ fun ServerPackageListScreen(
             TopAppBar(
                 title = { Text("服务器题库") },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 },

@@ -26,6 +26,7 @@ fun QuestionListByPackageScreen(
 ) {
     var questions by remember { mutableStateOf<List<Question>?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+    val onBack = rememberBackAction(navController)
 
     LaunchedEffect(packageName) {
         isLoading = true
@@ -38,7 +39,7 @@ fun QuestionListByPackageScreen(
             TopAppBar(
                 title = { Text(packageName.substringAfterLast('/')) },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 }
