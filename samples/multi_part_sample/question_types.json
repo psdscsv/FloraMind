@@ -1,0 +1,16 @@
+[
+  {
+    "id": "multi_part",
+    "name": "多小问",
+    "description": "一道大题下分多个小问，逐个小问作答，显示答案后整体判定",
+    "layout": "parts",
+    "grading": "self"
+  },
+  {
+    "id": "case_analysis",
+    "name": "案例分析",
+    "description": "给一段材料写完整分析，可由 AI 评分",
+    "layout": "single",
+    "grading": "ai"
+  }
+]

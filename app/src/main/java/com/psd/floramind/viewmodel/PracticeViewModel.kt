@@ -37,6 +37,14 @@ class PracticeViewModel(
     private val _fillBlankAnswers = MutableStateFlow<Map<String, List<String>>>(emptyMap())
     val fillBlankAnswers: StateFlow<Map<String, List<String>>> = _fillBlankAnswers.asStateFlow()
 
+    /** 自定义多小问题型：每个小问的输入，key = 包名#题号 */
+    private val _partAnswers = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+    val partAnswers: StateFlow<Map<String, List<String>>> = _partAnswers.asStateFlow()
+
+    /** 本次练习涉及的自定义题型定义，key = 包名#题型id */
+    private val _customTypes = MutableStateFlow<Map<String, CustomQuestionType>>(emptyMap())
+    val customTypes: StateFlow<Map<String, CustomQuestionType>> = _customTypes.asStateFlow()
+
     /** 做题记录，key = 包名#题号 */
     private val _records = MutableStateFlow<Map<String, PracticeRecord>>(emptyMap())
     val records: StateFlow<Map<String, PracticeRecord>> = _records.asStateFlow()
@@ -113,16 +121,25 @@ class PracticeViewModel(
         }
     }
 
-    /** 读取涉及到的题库包的做题记录，合并成 包名#题号 -> 记录 */
+    /** 读取涉及到的题库包的做题记录 + 自定义题型定义 */
     private suspend fun loadRecords(questions: List<Question>) {
         val merged = mutableMapOf<String, PracticeRecord>()
+        val types = mutableMapOf<String, CustomQuestionType>()
         questions.map { it.packageName }.distinct().forEach { pkg ->
             repository.getPracticeRecords(pkg).forEach { (questionId, record) ->
                 merged["$pkg#$questionId"] = record
             }
+            repository.getCustomQuestionTypes(pkg).forEach { type ->
+                types["$pkg#${type.id}"] = type
+            }
         }
         _records.value = merged
+        _customTypes.value = types
     }
+
+    /** 当前题所属包的自定义题型定义（不是自定义题型返回 null） */
+    fun customTypeOf(question: Question): CustomQuestionType? =
+        _customTypes.value["${question.packageName}#${question.customType.orEmpty()}"]
 
     // ---------------- 导航 ----------------
 
@@ -172,6 +189,48 @@ class PracticeViewModel(
     fun getFillBlankAnswers(questionKey: String): List<String> =
         _fillBlankAnswers.value[questionKey] ?: emptyList()
 
+    // ---------------- 自定义多小问 ----------------
+
+    fun updatePartAnswer(questionKey: String, partIndex: Int, text: String) {
+        val current = _partAnswers.value[questionKey]?.toMutableList() ?: mutableListOf()
+        while (current.size <= partIndex) current.add("")
+        current[partIndex] = text
+        _partAnswers.value = _partAnswers.value + (questionKey to current)
+    }
+
+    fun getPartAnswers(questionKey: String): List<String> =
+        _partAnswers.value[questionKey] ?: emptyList()
+
+    /** 把所有小问的作答拼成一段，用于保存记录 / AI 评分 */
+    private fun compositeAnswer(question: Question): String =
+        question.composePartsAnswer(getPartAnswers(question.practiceKey))
+
+    /** 参考答案（多小问逐条拼接），交给 AI 评分用 */
+    private fun referenceAnswer(question: Question): String {
+        if (isSingleCustomType(question)) return question.correctAnswer.orEmpty()
+        val parts = question.resolvedParts()
+        val joined = parts.mapIndexedNotNull { index, part ->
+            part.answer?.takeIf { it.isNotBlank() }?.let { "（${index + 1}）$it" }
+        }
+        return if (joined.isNotEmpty()) joined.joinToString("\n")
+        else question.correctAnswer.orEmpty()
+    }
+
+    /** 当前题保存记录/评分时使用的作答文本 */
+    private fun answerFor(question: Question): String = when {
+        question.type == QuestionType.FILL_BLANK ->
+            getFillBlankAnswers(question.practiceKey).joinToString("; ")
+
+        question.type == QuestionType.CUSTOM && !isSingleCustomType(question) ->
+            compositeAnswer(question)
+
+        question.type == QuestionType.DIAGRAM -> ""
+        else -> getUserAnswer(question)
+    }
+
+    private fun isSingleCustomType(question: Question): Boolean =
+        customTypeOf(question)?.isSingleLayout == true
+
     /** 选择题：点选选项即判定 */
     fun selectOption(option: String) {
         if (_revealed.value || _attemptRecorded.value) return
@@ -194,13 +253,7 @@ class PracticeViewModel(
     fun selfJudge(correct: Boolean, answerOverride: String? = null) {
         if (_attemptRecorded.value) return
         val question = currentQuestion() ?: return
-        val answer = answerOverride ?: when (question.type) {
-            QuestionType.FILL_BLANK ->
-                getFillBlankAnswers(question.practiceKey).joinToString("; ")
-
-            QuestionType.DIAGRAM -> ""
-            else -> getUserAnswer(question)
-        }
+        val answer = answerOverride ?: answerFor(question)
         _attemptRecorded.value = true
         recordResult(question, correct, if (correct) 100 else 0, answer)
     }
@@ -214,6 +267,7 @@ class PracticeViewModel(
                 _records.value = _records.value - question.practiceKey
                 _userAnswers.value = _userAnswers.value - question.practiceKey
                 _fillBlankAnswers.value = _fillBlankAnswers.value - question.practiceKey
+                _partAnswers.value = _partAnswers.value - question.practiceKey
                 resetAttemptState()
             } catch (e: Exception) {
                 Log.e("PracticeVM", "resetPractice failed", e)
@@ -243,7 +297,11 @@ class PracticeViewModel(
     fun submitCurrentAnswer() {
         if (_isSubmitting.value || _attemptRecorded.value) return
         val question = currentQuestion() ?: return
-        val userAnswer = getUserAnswer(question)
+        // 自定义题型只有声明了 grading = "ai" 才允许 AI 评分
+        if (question.type == QuestionType.CUSTOM &&
+            customTypeOf(question)?.useAiGrading != true
+        ) return
+        val userAnswer = answerFor(question)
         if (userAnswer.isBlank()) return
 
         _isSubmitting.value = true
@@ -265,6 +323,14 @@ class PracticeViewModel(
                             question.stem,
                             userAnswer,
                             question.keywords ?: emptyList()
+                        ) ?: GradingResult(0, "未配置 API Key", emptyList(), emptyList(), "请在设置中填写")
+                    }
+
+                    QuestionType.CUSTOM -> {
+                        currentScorer()?.evaluateComposite(
+                            question.stem,
+                            referenceAnswer(question),
+                            userAnswer
                         ) ?: GradingResult(0, "未配置 API Key", emptyList(), emptyList(), "请在设置中填写")
                     }
 

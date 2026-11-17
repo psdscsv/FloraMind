@@ -32,9 +32,11 @@ import com.psd.floramind.data.DataStoreManager
 import com.psd.floramind.model.LabelPoint
 import com.psd.floramind.model.PracticeRecord
 import com.psd.floramind.model.Question
+import com.psd.floramind.model.QuestionPart
 import com.psd.floramind.model.QuestionType
 import com.psd.floramind.model.network.GradingResult
 import com.psd.floramind.model.practiceKey
+import com.psd.floramind.model.resolvedParts
 import com.psd.floramind.repository.QuestionRepository
 import com.psd.floramind.viewmodel.PracticeViewModel
 
@@ -98,6 +100,8 @@ fun PracticeScreen(
     val gradingResult by viewModel.gradingResult.collectAsState()
     val userAnswers by viewModel.userAnswers.collectAsState()
     val fillBlankAnswers by viewModel.fillBlankAnswers.collectAsState()
+    val partAnswers by viewModel.partAnswers.collectAsState()
+    val customTypes by viewModel.customTypes.collectAsState()
     val records by viewModel.records.collectAsState()
     val revealed by viewModel.revealed.collectAsState()
     val selectedOption by viewModel.selectedOption.collectAsState()
@@ -165,7 +169,28 @@ fun PracticeScreen(
                         val questionKey = question.practiceKey
                         val record = records[questionKey]
                         val currentAnswer = userAnswers[questionKey] ?: ""
-                        val aiGradable = question.type in AI_GRADABLE_TYPES
+                        val customType = customTypes["${question.packageName}#${question.customType.orEmpty()}"]
+                        val typeName = if (question.type == QuestionType.CUSTOM) {
+                            question.customTypeName(customType)
+                        } else {
+                            question.type.label()
+                        }
+                        val customParts = if (question.type == QuestionType.CUSTOM) {
+                            question.resolvedParts()
+                        } else {
+                            emptyList()
+                        }
+                        val customPartAnswers = partAnswers[questionKey] ?: emptyList()
+                        val customIsParts = customType?.isSingleLayout != true
+                        val aiGradable = question.type in AI_GRADABLE_TYPES ||
+                                (question.type == QuestionType.CUSTOM && customType?.useAiGrading == true)
+                        val hasAnswer = if (question.type == QuestionType.CUSTOM && customIsParts) {
+                            customParts.indices.any {
+                                !customPartAnswers.getOrNull(it).isNullOrBlank()
+                            }
+                        } else {
+                            currentAnswer.isNotBlank()
+                        }
 
                         LazyColumn(
                             modifier = Modifier
@@ -174,7 +199,13 @@ fun PracticeScreen(
                             verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
                             item {
-                                QuestionHeader(question, record, currentIndex, questions.size)
+                                QuestionHeader(
+                                    question = question,
+                                    record = record,
+                                    index = currentIndex,
+                                    total = questions.size,
+                                    typeName = typeName
+                                )
                             }
 
                             if (question.type != QuestionType.FILL_BLANK) {
@@ -215,6 +246,21 @@ fun PracticeScreen(
                                         }
                                     )
 
+                                    QuestionType.CUSTOM -> if (customIsParts) {
+                                        CustomPartsInput(
+                                            parts = customParts,
+                                            answers = customPartAnswers,
+                                            onAnswerChange = { index, text ->
+                                                viewModel.updatePartAnswer(questionKey, index, text)
+                                            }
+                                        )
+                                    } else {
+                                        EssayInput(
+                                            text = currentAnswer,
+                                            onTextChange = { viewModel.updateUserAnswer(it) }
+                                        )
+                                    }
+
                                     else -> EssayInput(
                                         text = currentAnswer,
                                         onTextChange = { viewModel.updateUserAnswer(it) }
@@ -223,7 +269,13 @@ fun PracticeScreen(
                             }
 
                             if (revealed) {
-                                item { AnswerBlock(question) }
+                                item {
+                                    AnswerBlock(
+                                        question = question,
+                                        showParts = question.type == QuestionType.CUSTOM &&
+                                                (customIsParts || question.parts.orEmpty().isNotEmpty())
+                                    )
+                                }
                             }
 
                             if (gradingResult != null) {
@@ -244,7 +296,7 @@ fun PracticeScreen(
                                         if (aiGradable && !isSubmitting) {
                                             Button(
                                                 onClick = { viewModel.submitCurrentAnswer() },
-                                                enabled = apiKey.isNotBlank() && currentAnswer.isNotBlank(),
+                                                enabled = apiKey.isNotBlank() && hasAnswer,
                                                 modifier = Modifier.fillMaxWidth()
                                             ) {
                                                 Text("AI 评分")
@@ -365,11 +417,12 @@ private fun QuestionHeader(
     question: Question,
     record: PracticeRecord?,
     index: Int,
-    total: Int
+    total: Int,
+    typeName: String
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            TagChip(question.type.label())
+            TagChip(typeName)
             TagChip(question.packageName.substringAfterLast('/'))
         }
         Row(
@@ -565,10 +618,40 @@ private fun EssayInput(text: String, onTextChange: (String) -> Unit) {
     )
 }
 
+/** 自定义题型的「多小问」作答区：每个小问题干 + 独立作答框 */
+@Composable
+private fun CustomPartsInput(
+    parts: List<QuestionPart>,
+    answers: List<String>,
+    onAnswerChange: (Int, String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        parts.forEachIndexed { index, part ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val partStem = part.stem.trim()
+                if (partStem.isNotBlank()) {
+                    Text(
+                        text = partStem,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+                OutlinedTextField(
+                    value = answers.getOrNull(index) ?: "",
+                    onValueChange = { newValue -> onAnswerChange(index, newValue) },
+                    label = { Text("第 ${index + 1} 小问") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 6
+                )
+            }
+        }
+    }
+}
+
 // ===================== 答案 / 自我判定 =====================
 
 @Composable
-private fun AnswerBlock(question: Question) {
+private fun AnswerBlock(question: Question, showParts: Boolean = false) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = AnswerContainer,
@@ -582,28 +665,56 @@ private fun AnswerBlock(question: Question) {
                 color = AnswerLabelColor
             )
             Spacer(Modifier.height(4.dp))
-            if (question.type == QuestionType.DIAGRAM) {
-                val labels = question.labels.orEmpty()
-                Text(
-                    if (labels.isEmpty()) "（本题暂无标注答案）"
-                    else "需标注部位：" + labels.joinToString(" · ") { it.correctAnswer },
-                    style = MaterialTheme.typography.bodyLarge
-                )
-            } else {
-                Text(
-                    question.correctAnswer?.takeIf { it.isNotBlank() }
-                        ?: "（本题暂无参考答案）",
-                    style = MaterialTheme.typography.bodyLarge
-                )
-            }
-            val keywords = question.keywords.orEmpty().filter { it.isNotBlank() }
-            if (keywords.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "关键词：" + keywords.joinToString("、"),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            when {
+                // 自定义题型的多个小问：逐个小问给出参考答案
+                showParts -> {
+                    val parts = question.resolvedParts()
+                    parts.forEachIndexed { index, part ->
+                        if (index > 0) Spacer(Modifier.height(8.dp))
+                        Text(
+                            "（${index + 1}）" + (
+                                    part.answer?.takeIf { it.isNotBlank() }
+                                        ?: "（无参考答案）"
+                                    ),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        val partKeywords = part.keywords.orEmpty().filter { it.isNotBlank() }
+                        if (partKeywords.isNotEmpty()) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "关键词：" + partKeywords.joinToString("、"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                question.type == QuestionType.DIAGRAM -> {
+                    val labels = question.labels.orEmpty()
+                    Text(
+                        if (labels.isEmpty()) "（本题暂无标注答案）"
+                        else "需标注部位：" + labels.joinToString(" · ") { it.correctAnswer },
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+
+                else -> {
+                    Text(
+                        question.correctAnswer?.takeIf { it.isNotBlank() }
+                            ?: "（本题暂无参考答案）",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    val keywords = question.keywords.orEmpty().filter { it.isNotBlank() }
+                    if (keywords.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "关键词：" + keywords.joinToString("、"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }

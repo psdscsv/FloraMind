@@ -47,6 +47,26 @@ class DeepSeekScorer(private val apiKey: String) {
         callApi(prompt)
     }
 
+    /**
+     * 题库包自定义题型（如多小问）的整体评分：
+     * 把整题小题干 + 参考答案 + 学生分小问的作答一起交给模型。
+     */
+    suspend fun evaluateComposite(
+        question: String,
+        referenceAnswer: String,
+        userAnswer: String
+    ): GradingResult = withContext(Dispatchers.IO) {
+        val prompt = """
+            你是一位生物学教授。下面是一道包含多个小问的题目，请根据参考答案评价学生的整体作答。
+            题目：$question
+            参考答案：$referenceAnswer
+            学生答案：$userAnswer
+            请给出0-100的分数，逐个指出漏答或答错的要点。只返回一个 JSON 对象，不要 Markdown 代码块，不要任何解释性文字。
+            JSON 结构：{"score": ..., "feedback": "...", "matchedPoints": [...], "missingPoints": [...], "suggestions": "..."}
+        """.trimIndent()
+        callApi(prompt)
+    }
+
     private suspend fun callApi(prompt: String): GradingResult {
         val request = DeepSeekRequest(
             messages = listOf(

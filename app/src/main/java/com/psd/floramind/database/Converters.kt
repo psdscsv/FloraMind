@@ -4,6 +4,7 @@ import androidx.room.TypeConverter
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.psd.floramind.model.LabelPoint
+import com.psd.floramind.model.QuestionPart
 import com.psd.floramind.model.QuestionType
 
 class Converters {
@@ -42,6 +43,20 @@ class Converters {
     fun toLabelPointList(value: String?): List<LabelPoint>? {
         return value?.let {
             val type = object : TypeToken<List<LabelPoint>>() {}.type
+            Gson().fromJson(it, type)
+        }
+    }
+
+    // ---------- List<QuestionPart> 转换（自定义题型的多个小问） ----------
+    @TypeConverter
+    fun fromQuestionPartList(value: List<QuestionPart>?): String? {
+        return value?.let { Gson().toJson(it) }
+    }
+
+    @TypeConverter
+    fun toQuestionPartList(value: String?): List<QuestionPart>? {
+        return value?.let {
+            val type = object : TypeToken<List<QuestionPart>>() {}.type
             Gson().fromJson(it, type)
         }
     }

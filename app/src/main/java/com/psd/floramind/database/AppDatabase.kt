@@ -12,7 +12,7 @@ import com.psd.floramind.model.StudyRecord
 
 @Database(
     entities = [Question::class, StudyRecord::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -25,8 +25,7 @@ abstract class AppDatabase : RoomDatabase() {
         private var INSTANCE: AppDatabase? = null
 
         // 迁移：从版本1到2
-        val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(db: SupportSQLiteDatabase) {
+        val MIGRATION_1_2 = object : Migration(1, 2) {            override fun migrate(db: SupportSQLiteDatabase) {
                 // 1. 创建新表（包含所有列，确保 NOT NULL 约束与实体类一致）
                 db.execSQL("CREATE TABLE questions_new (" +
                         "packageName TEXT NOT NULL, " +
@@ -57,6 +56,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // 迁移：从版本2到3（题库包自定义题型：customType + parts 两列）
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE questions ADD COLUMN customType TEXT")
+                db.execSQL("ALTER TABLE questions ADD COLUMN parts TEXT")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -64,7 +71,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "floramind.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .fallbackToDestructiveMigration() // 开发阶段：如果迁移失败则重建（可避免反复崩溃）
                     .build()
                 INSTANCE = instance

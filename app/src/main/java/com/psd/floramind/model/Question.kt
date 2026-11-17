@@ -13,9 +13,16 @@ data class Question(
     @SerializedName("correctAnswer") val correctAnswer: String? = null,
     val keywords: List<String>? = null,
     val imageName: String? = null,        // 相对路径，如 "images/leaf.png"
-    val labels: List<LabelPoint>? = null
+    val labels: List<LabelPoint>? = null,
+    /** 题库包自定义题型 id（type = CUSTOM 时使用，对应包内 question_types.json） */
+    val customType: String? = null,
+    /** 自定义题型的多个小问（type = CUSTOM 时使用） */
+    val parts: List<QuestionPart>? = null
 )
 
 enum class QuestionType {
-    DEFINITION, FILL_BLANK, CHOICE, SHORT_ANSWER, DIAGRAM, ESSAY
+    DEFINITION, FILL_BLANK, CHOICE, SHORT_ANSWER, DIAGRAM, ESSAY,
+
+    /** 题库包通过 question_types.json 自定义的题型 */
+    CUSTOM
 }

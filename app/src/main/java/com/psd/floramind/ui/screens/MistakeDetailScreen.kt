@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.psd.floramind.model.CustomQuestionType
 import com.psd.floramind.model.practiceKey
 import com.psd.floramind.repository.MistakeEntry
 import com.psd.floramind.repository.QuestionRepository
@@ -34,7 +35,11 @@ fun MistakeDetailScreen(
     navController: NavController
 ) {
     val viewModel = remember(packageName) { MistakeViewModel(repository) }
-    LaunchedEffect(packageName) { viewModel.loadMistakes(packageName) }
+    var customTypes by remember { mutableStateOf<Map<String, CustomQuestionType>>(emptyMap()) }
+    LaunchedEffect(packageName) {
+        customTypes = repository.getCustomTypeMap(packageName)
+        viewModel.loadMistakes(packageName)
+    }
     val mistakes by viewModel.mistakes.collectAsState()
 
     var pendingDelete by remember { mutableStateOf<MistakeEntry?>(null) }
@@ -115,7 +120,7 @@ fun MistakeDetailScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(
-                                            entry.question.type.label(),
+                                            entry.question.displayTypeName(customTypes),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.primary
                                         )

@@ -7,8 +7,11 @@ import androidx.room.withTransaction
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.psd.floramind.database.AppDatabase
+import com.psd.floramind.model.CustomQuestionType
 import com.psd.floramind.model.PracticeRecord
+import com.psd.floramind.model.QUESTION_TYPES_FILE
 import com.psd.floramind.model.Question
+import com.psd.floramind.model.sanitizedOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -85,7 +88,10 @@ class QuestionRepository(private val context: Context) {
         val currentVersion = context.packageManager
             .getPackageInfo(context.packageName, 0).versionCode
         val lastVersion = builtinPrefs.getInt("builtin_version", -1)
-        if (lastVersion == currentVersion) return@withContext
+        // 数据库被重建过（例如迁移失败触发 destructive migration）时也要重新导入，
+        // 否则会得到一个空题库
+        val hasQuestions = questionDao.getAllPackageNames().isNotEmpty()
+        if (lastVersion == currentVersion && hasQuestions) return@withContext
 
         // 1) 旧单文件题库（可选）
         try {
@@ -496,6 +502,40 @@ class QuestionRepository(private val context: Context) {
 
     fun getImageFile(packageName: String, imageRelativePath: String): File? =
         File(File(packagesRootDir, packageName), imageRelativePath).takeIf { it.exists() }
+
+    // ================== 自定义题型 ==================
+
+    /**
+     * 读取题库包自定义的题型（包目录下的 question_types.json）。
+     *
+     * 文件可以是一个数组，也可以是单个对象；解析失败返回空列表，
+     * 题目仍按「整题一个作答框」的兜底方式作答，不会崩。
+     */
+    suspend fun getCustomQuestionTypes(packageName: String): List<CustomQuestionType> =
+        withContext(Dispatchers.IO) {
+            val file = File(File(packagesRootDir, packageName), QUESTION_TYPES_FILE)
+            if (!file.isFile) return@withContext emptyList()
+            try {
+                val text = file.readText().trim()
+                if (text.isEmpty()) return@withContext emptyList()
+                val raw: List<CustomQuestionType> = if (text.startsWith("[")) {
+                    Gson().fromJson(
+                        text,
+                        object : TypeToken<List<CustomQuestionType>>() {}.type
+                    ) ?: emptyList()
+                } else {
+                    listOfNotNull(Gson().fromJson(text, CustomQuestionType::class.java))
+                }
+                raw.mapNotNull { it.sanitizedOrNull() }.distinctBy { it.id }
+            } catch (e: Exception) {
+                Log.e("Repo", "解析自定义题型失败 ${file.path}", e)
+                emptyList()
+            }
+        }
+
+    /** 包内「题型 id -> 定义」的映射，便于列表按 id 显示中文名 */
+    suspend fun getCustomTypeMap(packageName: String): Map<String, CustomQuestionType> =
+        getCustomQuestionTypes(packageName).associateBy { it.id }
 
     // ================== 做题记录（存放在题库包内） ==================
 
