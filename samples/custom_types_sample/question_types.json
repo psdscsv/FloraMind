@@ -12,5 +12,19 @@
     "description": "给一段材料写完整分析，可由 AI 评分",
     "layout": "single",
     "grading": "ai"
+  },
+  {
+    "id": "multi_choice",
+    "name": "多选题",
+    "description": "从多个选项中勾选全部正确答案，提交后自动判定",
+    "layout": "multi_choice",
+    "grading": "self"
+  },
+  {
+    "id": "image_text",
+    "name": "图文作答",
+    "description": "给出一张图片和一段描述，写文字作答",
+    "layout": "image_text",
+    "grading": "self"
   }
 ]

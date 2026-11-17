@@ -57,6 +57,10 @@ class PracticeViewModel(
     private val _selectedOption = MutableStateFlow<String?>(null)
     val selectedOption: StateFlow<String?> = _selectedOption.asStateFlow()
 
+    /** 自定义多选题已勾选的选项 */
+    private val _selectedOptions = MutableStateFlow<Set<String>>(emptySet())
+    val selectedOptions: StateFlow<Set<String>> = _selectedOptions.asStateFlow()
+
     /** 当前题本次是否已经记录过（避免一道题被重复计数） */
     private val _attemptRecorded = MutableStateFlow(false)
     val attemptRecorded: StateFlow<Boolean> = _attemptRecorded.asStateFlow()
@@ -165,6 +169,7 @@ class PracticeViewModel(
     private fun resetAttemptState() {
         _revealed.value = false
         _selectedOption.value = null
+        _selectedOptions.value = emptySet()
         _attemptRecorded.value = false
         _gradingResult.value = null
     }
@@ -207,7 +212,9 @@ class PracticeViewModel(
 
     /** 参考答案（多小问逐条拼接），交给 AI 评分用 */
     private fun referenceAnswer(question: Question): String {
-        if (isSingleCustomType(question)) return question.correctAnswer.orEmpty()
+        if (isSingleCustomType(question) || isImageTextCustomType(question)) {
+            return question.correctAnswer.orEmpty()
+        }
         val parts = question.resolvedParts()
         val joined = parts.mapIndexedNotNull { index, part ->
             part.answer?.takeIf { it.isNotBlank() }?.let { "（${index + 1}）$it" }
@@ -221,6 +228,14 @@ class PracticeViewModel(
         question.type == QuestionType.FILL_BLANK ->
             getFillBlankAnswers(question.practiceKey).joinToString("; ")
 
+        question.type == QuestionType.CUSTOM && isMultiChoiceCustomType(question) ->
+            question.options.orEmpty()
+                .filter { it in _selectedOptions.value }
+                .joinToString("; ")
+
+        question.type == QuestionType.CUSTOM && isImageTextCustomType(question) ->
+            getUserAnswer(question)
+
         question.type == QuestionType.CUSTOM && !isSingleCustomType(question) ->
             compositeAnswer(question)
 
@@ -230,6 +245,32 @@ class PracticeViewModel(
 
     private fun isSingleCustomType(question: Question): Boolean =
         customTypeOf(question)?.isSingleLayout == true
+
+    private fun isMultiChoiceCustomType(question: Question): Boolean =
+        customTypeOf(question)?.isMultiChoiceLayout == true
+
+    private fun isImageTextCustomType(question: Question): Boolean =
+        customTypeOf(question)?.isImageTextLayout == true
+
+    /** 自定义多选题：勾选/取消一个选项 */
+    fun toggleOption(option: String) {
+        if (_revealed.value || _attemptRecorded.value) return
+        val current = _selectedOptions.value
+        _selectedOptions.value = if (option in current) current - option else current + option
+    }
+
+    /** 自定义多选题：提交并自动判定（选项与 correctOptions 完全一致才算对） */
+    fun submitMultiChoice() {
+        if (_isSubmitting.value || _revealed.value || _attemptRecorded.value) return
+        val question = currentQuestion() ?: return
+        val selected = _selectedOptions.value
+        if (selected.isEmpty() || question.correctOptions.isNullOrEmpty()) return
+        val correct = question.isMultiChoiceCorrect(selected)
+        _revealed.value = true
+        _attemptRecorded.value = true
+        val answerText = question.options.orEmpty().filter { it in selected }.joinToString("; ")
+        recordResult(question, correct, if (correct) 100 else 0, answerText)
+    }
 
     /** 选择题：点选选项即判定 */
     fun selectOption(option: String) {
@@ -268,6 +309,7 @@ class PracticeViewModel(
                 _userAnswers.value = _userAnswers.value - question.practiceKey
                 _fillBlankAnswers.value = _fillBlankAnswers.value - question.practiceKey
                 _partAnswers.value = _partAnswers.value - question.practiceKey
+                _selectedOptions.value = emptySet()
                 resetAttemptState()
             } catch (e: Exception) {
                 Log.e("PracticeVM", "resetPractice failed", e)
@@ -297,10 +339,11 @@ class PracticeViewModel(
     fun submitCurrentAnswer() {
         if (_isSubmitting.value || _attemptRecorded.value) return
         val question = currentQuestion() ?: return
-        // 自定义题型只有声明了 grading = "ai" 才允许 AI 评分
-        if (question.type == QuestionType.CUSTOM &&
-            customTypeOf(question)?.useAiGrading != true
-        ) return
+        // 自定义题型只有声明了 grading = "ai" 才允许 AI 评分；多选题走自动判定
+        if (question.type == QuestionType.CUSTOM) {
+            val definition = customTypeOf(question)
+            if (definition?.useAiGrading != true || definition.isMultiChoiceLayout) return
+        }
         val userAnswer = answerFor(question)
         if (userAnswer.isBlank()) return
 

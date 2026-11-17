@@ -17,7 +17,9 @@ data class Question(
     /** 题库包自定义题型 id（type = CUSTOM 时使用，对应包内 question_types.json） */
     val customType: String? = null,
     /** 自定义题型的多个小问（type = CUSTOM 时使用） */
-    val parts: List<QuestionPart>? = null
+    val parts: List<QuestionPart>? = null,
+    /** 多选题的正确选项（layout = multi_choice 时使用，内容与 options 对应） */
+    val correctOptions: List<String>? = null
 )
 
 enum class QuestionType {

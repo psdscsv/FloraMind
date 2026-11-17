@@ -12,7 +12,7 @@ import com.psd.floramind.model.StudyRecord
 
 @Database(
     entities = [Question::class, StudyRecord::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -64,6 +64,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // 迁移：从版本3到4（自定义多选题的正确选项）
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE questions ADD COLUMN correctOptions TEXT")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -71,7 +78,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "floramind.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigration() // 开发阶段：如果迁移失败则重建（可避免反复崩溃）
                     .build()
                 INSTANCE = instance

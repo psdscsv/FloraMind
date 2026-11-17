@@ -21,7 +21,7 @@ class DeepSeekScorer(private val apiKey: String) {
         standardAnswer: String
     ): GradingResult = withContext(Dispatchers.IO) {
         val prompt = """
-            你是一位植物学教授。请根据以下标准答案，评价学生的名词解释。
+            你是一位生物学教授。请根据以下标准答案，评价学生的名词解释。
             术语：$term
             标准答案：$standardAnswer
             学生答案：$userAnswer
@@ -37,7 +37,7 @@ class DeepSeekScorer(private val apiKey: String) {
         keywords: List<String>
     ): GradingResult = withContext(Dispatchers.IO) {
         val prompt = """
-            你是一位植物学教授。根据以下问题评价学生的回答。
+            你是一位生物学教授。根据以下问题评价学生的回答。
             问题：$question
             关键词：${keywords.joinToString(", ")}
             学生答案：$userAnswer
@@ -57,7 +57,7 @@ class DeepSeekScorer(private val apiKey: String) {
         userAnswer: String
     ): GradingResult = withContext(Dispatchers.IO) {
         val prompt = """
-            你是一位生物学教授。下面是一道包含多个小问的题目，请根据参考答案评价学生的整体作答。
+            你是一位生物学教授。下面是一道题目（可能包含多个小问或图文材料），请根据参考答案评价学生的整体作答。
             题目：$question
             参考答案：$referenceAnswer
             学生答案：$userAnswer
@@ -70,7 +70,7 @@ class DeepSeekScorer(private val apiKey: String) {
     private suspend fun callApi(prompt: String): GradingResult {
         val request = DeepSeekRequest(
             messages = listOf(
-                Message("system", "你是一个严格的植物学评分专家。只返回 JSON，不要 Markdown，不要其他文本。"),
+                Message("system", "你是一个严格的生物学评分专家。只返回 JSON，不要 Markdown，不要其他文本。"),
                 Message("user", prompt)
             )
         )

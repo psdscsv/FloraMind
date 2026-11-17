@@ -29,11 +29,13 @@ import androidx.navigation.NavController
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.psd.floramind.data.DataStoreManager
+import com.psd.floramind.model.CustomLayout
 import com.psd.floramind.model.LabelPoint
 import com.psd.floramind.model.PracticeRecord
 import com.psd.floramind.model.Question
 import com.psd.floramind.model.QuestionPart
 import com.psd.floramind.model.QuestionType
+import com.psd.floramind.model.correctOptionEntries
 import com.psd.floramind.model.network.GradingResult
 import com.psd.floramind.model.practiceKey
 import com.psd.floramind.model.resolvedParts
@@ -105,6 +107,7 @@ fun PracticeScreen(
     val records by viewModel.records.collectAsState()
     val revealed by viewModel.revealed.collectAsState()
     val selectedOption by viewModel.selectedOption.collectAsState()
+    val selectedOptions by viewModel.selectedOptions.collectAsState()
     val attemptRecorded by viewModel.attemptRecorded.collectAsState()
     val isSubmitting by viewModel.isSubmitting.collectAsState()
 
@@ -175,21 +178,26 @@ fun PracticeScreen(
                         } else {
                             question.type.label()
                         }
-                        val customParts = if (question.type == QuestionType.CUSTOM) {
-                            question.resolvedParts()
-                        } else {
-                            emptyList()
-                        }
+                        val layoutKind = customType?.layoutKind ?: CustomLayout.PARTS
+                        val isMultiChoice = question.type == QuestionType.CUSTOM &&
+                                layoutKind == CustomLayout.MULTI_CHOICE
+                        val isImageText = question.type == QuestionType.CUSTOM &&
+                                layoutKind == CustomLayout.IMAGE_TEXT
+                        val isPartsLayout = question.type == QuestionType.CUSTOM &&
+                                layoutKind == CustomLayout.PARTS
+                        val customParts = if (isPartsLayout) question.resolvedParts() else emptyList()
                         val customPartAnswers = partAnswers[questionKey] ?: emptyList()
-                        val customIsParts = customType?.isSingleLayout != true
+                        val canAutoJudgeMultiChoice = question.correctOptions.orEmpty().isNotEmpty() &&
+                                question.options.orEmpty().isNotEmpty()
                         val aiGradable = question.type in AI_GRADABLE_TYPES ||
-                                (question.type == QuestionType.CUSTOM && customType?.useAiGrading == true)
-                        val hasAnswer = if (question.type == QuestionType.CUSTOM && customIsParts) {
-                            customParts.indices.any {
+                                (question.type == QuestionType.CUSTOM &&
+                                        customType?.useAiGrading == true && !isMultiChoice)
+                        val hasAnswer = when {
+                            isMultiChoice -> selectedOptions.isNotEmpty()
+                            isPartsLayout -> customParts.indices.any {
                                 !customPartAnswers.getOrNull(it).isNullOrBlank()
                             }
-                        } else {
-                            currentAnswer.isNotBlank()
+                            else -> currentAnswer.isNotBlank()
                         }
 
                         LazyColumn(
@@ -246,16 +254,37 @@ fun PracticeScreen(
                                         }
                                     )
 
-                                    QuestionType.CUSTOM -> if (customIsParts) {
-                                        CustomPartsInput(
+                                    QuestionType.CUSTOM -> when {
+                                        isMultiChoice -> MultiChoiceOptions(
+                                            question = question,
+                                            selected = selectedOptions,
+                                            revealed = revealed,
+                                            onToggle = { viewModel.toggleOption(it) }
+                                        )
+
+                                        isImageText -> Column(
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            QuestionImage(
+                                                packageName = question.packageName,
+                                                imageName = question.imageName,
+                                                repository = repository
+                                            )
+                                            EssayInput(
+                                                text = currentAnswer,
+                                                onTextChange = { viewModel.updateUserAnswer(it) }
+                                            )
+                                        }
+
+                                        isPartsLayout -> CustomPartsInput(
                                             parts = customParts,
                                             answers = customPartAnswers,
                                             onAnswerChange = { index, text ->
                                                 viewModel.updatePartAnswer(questionKey, index, text)
                                             }
                                         )
-                                    } else {
-                                        EssayInput(
+
+                                        else -> EssayInput(
                                             text = currentAnswer,
                                             onTextChange = { viewModel.updateUserAnswer(it) }
                                         )
@@ -273,7 +302,8 @@ fun PracticeScreen(
                                     AnswerBlock(
                                         question = question,
                                         showParts = question.type == QuestionType.CUSTOM &&
-                                                (customIsParts || question.parts.orEmpty().isNotEmpty())
+                                                (isPartsLayout || question.parts.orEmpty().isNotEmpty()),
+                                        showMultiChoice = isMultiChoice
                                     )
                                 }
                             }
@@ -285,6 +315,15 @@ fun PracticeScreen(
                             if (!revealed && !attemptRecorded) {
                                 item {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        if (isMultiChoice && canAutoJudgeMultiChoice) {
+                                            Button(
+                                                onClick = { viewModel.submitMultiChoice() },
+                                                enabled = selectedOptions.isNotEmpty() && !isSubmitting,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("提交答案")
+                                            }
+                                        }
                                         OutlinedButton(
                                             onClick = { viewModel.revealAnswer() },
                                             modifier = Modifier.fillMaxWidth()
@@ -510,14 +549,18 @@ private fun ChoiceOptionRow(
     isPicked: Boolean,
     onClick: () -> Unit
 ) {
+    // 多选题「已勾选但还没提交」的高亮
+    val pickedBeforeReveal = !revealed && isPicked
     val container = when {
         revealed && isAnswer -> CorrectContainer
         revealed && isPicked -> WrongContainer
+        pickedBeforeReveal -> MaterialTheme.colorScheme.primaryContainer
         else -> MaterialTheme.colorScheme.surface
     }
     val border = when {
         revealed && isAnswer -> CorrectBorderColor
         revealed && isPicked -> WrongBorderColor
+        pickedBeforeReveal -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.outlineVariant
     }
     val contentColor = when {
@@ -560,6 +603,97 @@ private fun ChoiceOptionRow(
                 Icon(Icons.Default.Check, contentDescription = null, tint = CorrectBorderColor)
             } else if (revealed && isPicked) {
                 Icon(Icons.Default.Close, contentDescription = null, tint = WrongBorderColor)
+            } else if (pickedBeforeReveal) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+}
+
+// ===================== 自定义多选题 =====================
+
+@Composable
+private fun MultiChoiceOptions(
+    question: Question,
+    selected: Set<String>,
+    revealed: Boolean,
+    onToggle: (String) -> Unit
+) {
+    val options = question.options.orEmpty()
+    val correct = question.correctOptions.orEmpty()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .toSet()
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        options.forEachIndexed { index, option ->
+            ChoiceOptionRow(
+                letter = ('A' + index).toString(),
+                text = option,
+                revealed = revealed,
+                isAnswer = option.trim() in correct,
+                isPicked = option in selected,
+                onClick = { onToggle(option) }
+            )
+        }
+        if (!revealed) {
+            Text(
+                if (correct.isEmpty()) {
+                    "本题未设置正确答案，可点「显示答案」后自我判定"
+                } else {
+                    "可多选，选好后点「提交答案」"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+// ===================== 自定义图文题 =====================
+
+@Composable
+private fun QuestionImage(
+    packageName: String,
+    imageName: String?,
+    repository: QuestionRepository
+) {
+    if (imageName.isNullOrBlank()) return
+    val context = LocalContext.current
+    val imageFile = repository.getImageFile(packageName, imageName)
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (imageFile != null && imageFile.exists()) {
+            Image(
+                painter = rememberAsyncImagePainter(
+                    ImageRequest.Builder(context).data(imageFile).build()
+                ),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(240.dp)
+                    .padding(4.dp)
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(160.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "（图片未找到：$imageName）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -651,7 +785,11 @@ private fun CustomPartsInput(
 // ===================== 答案 / 自我判定 =====================
 
 @Composable
-private fun AnswerBlock(question: Question, showParts: Boolean = false) {
+private fun AnswerBlock(
+    question: Question,
+    showParts: Boolean = false,
+    showMultiChoice: Boolean = false
+) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = AnswerContainer,
@@ -666,6 +804,31 @@ private fun AnswerBlock(question: Question, showParts: Boolean = false) {
             )
             Spacer(Modifier.height(4.dp))
             when {
+                // 自定义多选题：列出正确选项的字母与内容
+                showMultiChoice -> {
+                    val entries = question.correctOptionEntries()
+                    if (entries.isEmpty()) {
+                        Text(
+                            "（本题未设置正确答案）",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    } else {
+                        Text(
+                            "正确答案：" + entries.joinToString("、") { it.first },
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = CorrectContent
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        entries.forEachIndexed { index, (letter, text) ->
+                            if (index > 0) Spacer(Modifier.height(4.dp))
+                            Text(
+                                "$letter. $text",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
+                }
+
                 // 自定义题型的多个小问：逐个小问给出参考答案
                 showParts -> {
                     val parts = question.resolvedParts()

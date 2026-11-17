@@ -152,4 +152,75 @@ class CustomQuestionTest {
         assertEquals("a", CustomQuestionType(id = "a").safeName())
         assertEquals("自定义题型", CustomQuestionType().safeName())
     }
+
+    @Test
+    fun parseMultiChoiceQuestion() {
+        val json = """
+            [{
+              "id": 5, "type": "CUSTOM", "customType": "multi_choice",
+              "stem": "下列属于昆虫纲特征的有（ ）",
+              "options": ["头胸腹三部分", "三对足", "两对翅", "用鳃呼吸"],
+              "correctOptions": ["头胸腹三部分", "三对足"]
+            }]
+        """.trimIndent()
+        val type = object : TypeToken<List<Question>>() {}.type
+        val question: Question = Gson().fromJson<List<Question>>(json, type).first()
+
+        assertEquals(listOf("头胸腹三部分", "三对足"), question.correctOptions)
+        assertTrue("顺序无关，选全即对", question.isMultiChoiceCorrect(listOf("三对足", "头胸腹三部分")))
+        assertFalse("少选算错", question.isMultiChoiceCorrect(listOf("头胸腹三部分")))
+        assertFalse(
+            "多选算错",
+            question.isMultiChoiceCorrect(listOf("头胸腹三部分", "三对足", "两对翅"))
+        )
+        assertEquals(listOf("A", "B"), question.correctOptionLetters())
+        assertEquals("A" to "头胸腹三部分", question.correctOptionEntries().first())
+    }
+
+    @Test
+    fun multiChoice_withoutCorrectOptions_neverCorrect() {
+        val question = Question(
+            id = 6,
+            type = QuestionType.CUSTOM,
+            stem = "题干",
+            options = listOf("甲", "乙")
+        )
+        assertFalse(question.isMultiChoiceCorrect(listOf("甲")))
+        assertTrue(question.correctOptionLetters().isEmpty())
+    }
+
+    @Test
+    fun customLayout_parsing() {
+        assertEquals(CustomLayout.MULTI_CHOICE, CustomLayout.from("multi_choice"))
+        assertEquals(CustomLayout.IMAGE_TEXT, CustomLayout.from("IMAGE_TEXT"))
+        assertEquals(CustomLayout.SINGLE, CustomLayout.from(" single "))
+        assertEquals("未知 layout 按 parts 兜底", CustomLayout.PARTS, CustomLayout.from("unknown"))
+        assertEquals(CustomLayout.PARTS, CustomLayout.from(null))
+
+        val multi = CustomQuestionType(id = "x", layout = "multi_choice")
+        assertTrue(multi.isMultiChoiceLayout)
+        assertFalse(multi.isPartsLayout)
+
+        val image = CustomQuestionType(id = "y", layout = "image_text")
+        assertTrue(image.isImageTextLayout)
+        assertFalse(image.isSingleLayout)
+    }
+
+    @Test
+    fun parseImageTextQuestion() {
+        val json = """
+            [{
+              "id": 7, "type": "CUSTOM", "customType": "image_text",
+              "stem": "观察图片作答",
+              "imageName": "images/paramecium.png",
+              "correctAnswer": "参考答案",
+              "keywords": ["纤毛"]
+            }]
+        """.trimIndent()
+        val type = object : TypeToken<List<Question>>() {}.type
+        val question: Question = Gson().fromJson<List<Question>>(json, type).first()
+        assertEquals("images/paramecium.png", question.imageName)
+        assertEquals("参考答案", question.correctAnswer)
+        assertEquals(listOf("纤毛"), question.keywords)
+    }
 }
